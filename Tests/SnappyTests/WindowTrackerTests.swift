@@ -33,7 +33,7 @@ struct WindowTrackingStateTests {
     }
 
     @Test func offScreenKeepsRecordingByDefault() {
-        // Leader decision (review round 1 #3): minimised, another Space or
+        // Design decision (review round 1 #3): minimised, another Space or
         // app hidden can't be told apart; none of them ends the recording.
         #expect(WindowTrackingState.offScreenEndsRecording == false)
         var state = WindowTrackingState(frame: start)

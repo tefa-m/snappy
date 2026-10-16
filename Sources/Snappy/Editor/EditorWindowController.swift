@@ -61,7 +61,7 @@ enum EditorAction: CaseIterable {
 /// titlebar). Owns the document; Copy/Save/Pin flatten via
 /// AnnotationRenderer, so the export is pixel-identical to the canvas.
 ///
-/// Toolbar structure (Tefa's 2026-07-18 feedback): every action is its OWN
+/// Toolbar structure (author feedback, 2026-07-18): every action is its OWN
 /// toolbar item — never a monolithic segmented control — so NSToolbar's
 /// native "…" overflow menu absorbs whatever doesn't fit and returns items
 /// as the window grows. Groups, in order: Undo·Redo, the tools (primary six
@@ -122,7 +122,7 @@ final class EditorWindowController: NSObject {
         let fit = min(1, visible.width * 0.8 / pointSize.width, visible.height * 0.7 / pointSize.height)
         // Small captures still open wide enough that NO toolbar item starts in
         // the overflow menu (HIG Toolbars); never wider than the screen, never
-        // narrower than minSize (primary groups visible — Tefa's feedback).
+        // narrower than minSize (primary groups visible — author feedback).
         let canvasSize = CGSize(
             width: max(
                 Self.minWindowSize.width,
@@ -319,7 +319,7 @@ final class EditorWindowController: NSObject {
         fillCheckbox.bezelStyle = .toolbar
     }
 
-    /// Small, smooth SF Symbols (Tefa's feedback: modern and a bit smaller).
+    /// Small, smooth SF Symbols (author feedback: modern and a bit smaller).
     private static func symbol(_ name: String, _ description: String) -> NSImage {
         let image = NSImage(systemSymbolName: name, accessibilityDescription: description) ?? NSImage()
         let configuration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
@@ -441,7 +441,7 @@ final class EditorWindowController: NSObject {
             return
         }
         Clipboard.copy(image, scale: document.scale)
-        // Copy is a "done" action: close the editor (Tefa's feedback).
+        // Copy is a "done" action: close the editor (author feedback).
         window.close()
     }
 
@@ -545,7 +545,7 @@ extension EditorWindowController: NSToolbarDelegate, NSToolbarItemValidation, NS
         var toolTip: String { "\(help) (\(key))" }
     }
 
-    /// Tefa's tool order: the six primary tools first, then the rest.
+    /// Tool order: the six primary tools first, then the rest.
     static let toolSpecs: [ToolSpec] = [
         ToolSpec(id: .init("toolSelect"), tool: .select, symbol: "cursorarrow", label: "Select",
                  help: "Select, move and resize annotations", key: "V", primary: true),

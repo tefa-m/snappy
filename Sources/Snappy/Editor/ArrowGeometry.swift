@@ -23,7 +23,7 @@ enum ArrowGeometry {
     /// Shaft half-width at the head end, as a fraction of strokeWidth. The
     /// renderer adds a round-join stroke of `edgeRounding` on top (rounded
     /// edges), so the VISIBLE shaft width is (2 × 0.85 + 0.3) × strokeWidth =
-    /// 2.0 × strokeWidth — thickening toward the head (Tefa's feedback).
+    /// 2.0 × strokeWidth — thickening toward the head (author feedback).
     private static let shaftWidthFactor: CGFloat = 0.85
     /// Tail half-width as a fraction of strokeWidth (the "ergonomic" taper).
     private static let tailWidthFactor: CGFloat = 0.08

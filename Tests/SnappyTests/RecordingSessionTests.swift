@@ -365,7 +365,7 @@ struct RecordingSessionTests {
         #expect(s.handle(.captureFinished(take)) == .ignored)
     }
 
-    // MARK: - Magic Pen (leader decision, Tefa to confirm)
+    // MARK: - Magic Pen (design decision, not yet confirmed)
 
     @Test func magicPenTogglesOnFromInteractAndBack() {
         var s = session(in: .recording(.interact))

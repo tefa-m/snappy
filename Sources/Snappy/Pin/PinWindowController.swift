@@ -399,7 +399,7 @@ private final class PinToolbarView: NSGlassEffectView {
     private func makeButton(for action: PinAction) -> NSButton {
         var configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
         if action == .close {
-            // Red macOS-style close control (Tefa's M-C spec): white × on a
+            // Red macOS-style close control (M-C spec): white × on a
             // red disc — 3.4–3.6:1, above the 3:1 non-text minimum.
             configuration = configuration.applying(.init(paletteColors: [.white, .systemRed]))
         }

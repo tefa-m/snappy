@@ -3,12 +3,13 @@ import CoreText
 import Testing
 @testable import Snappy
 
-/// Reproducible OCR harness for design review C1 (docs/design-reviews/
-/// editor-canvas.md): draw a known secret, cover it with a blur / pixelate
-/// annotation drawn around the line, flatten through the shipping renderer,
-/// and run the shipping Vision OCR on the result. These check the measured
-/// cases only. They are no guarantee of redaction in general: blur and
-/// pixelate obscure the text, they don't remove it.
+/// Reproducible OCR harness for the blur/pixelate strength review (see
+/// `EffectRenderer.blurRadius` and features/annotations.md): draw a known
+/// secret, cover it with a blur / pixelate annotation drawn around the line,
+/// flatten through the shipping renderer, and run the shipping Vision OCR on
+/// the result. These check the measured cases only. They are no guarantee of
+/// redaction in general: blur and pixelate obscure the text, they don't
+/// remove it.
 @Suite struct EffectRedactionTests {
     private static let secret = "Password: hunter2 Token 4821-7730"
 

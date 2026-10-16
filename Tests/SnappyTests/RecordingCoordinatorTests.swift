@@ -587,7 +587,7 @@ struct RecordingCoordinatorTests {
         h.coordinator.handle(.command(.cancel))
     }
 
-    /// Review Sol should-fix: the Settings pop-up goes through the same live
+    /// Review should-fix: the Settings pop-up goes through the same live
     /// path as the menu bar, and an open Settings window follows changes
     /// made elsewhere (wired as in `StatusItemController`).
     @Test func settingsThicknessIsAppliedLiveAndFollowsOtherChanges() async {

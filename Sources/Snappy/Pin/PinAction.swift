@@ -53,7 +53,7 @@ enum PinAction: CaseIterable {
 
 /// Hover appearance of a pin.
 enum PinHover {
-    /// Subtle hover transparency (Tefa's M-C spec: "keep the hover feedback
+    /// Subtle hover transparency (M-C spec: "keep the hover feedback
     /// subtle"). With Reduce Transparency on, the pin stays opaque.
     static let alpha: Double = 0.9
 

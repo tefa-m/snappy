@@ -166,7 +166,7 @@ struct RecordingToolbarTests {
 
     /// A key press and a click do the same thing: style commands by the
     /// style they leave `base` in; every other outcome must match exactly
-    /// (undo, redo and clear never stand in for each other — review Sol nit).
+    /// (undo, redo and clear never stand in for each other — review nit).
     private func sameEffect(_ press: RecordingOutcome, _ clicks: [RecordingOutcome], from base: InkStyle) -> Bool {
         func styled(_ outcomes: [RecordingOutcome]) -> InkStyle? {
             var style = base

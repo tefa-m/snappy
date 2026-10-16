@@ -45,7 +45,8 @@ enum EffectRenderer {
 
     /// The effect applied to `rect` of the base image, returned as a CGImage
     /// covering exactly the integral clamped rect (also returned, bottom-left
-    /// coordinates). Nil when the region is degenerate.
+    /// coordinates). Nil when the region is degenerate or CoreImage produced
+    /// nothing (the caller then covers the region opaquely).
     static func render(
         _ kind: EffectKind, base: CGImage, rect: CGRect, cache: EffectCache = sharedCache
     ) -> (image: CGImage, rect: CGRect)? {
@@ -60,21 +61,22 @@ enum EffectRenderer {
         // transparent at the image border; cropping keeps rendering cheap.
         let input = CIImage(cgImage: base).clampedToExtent()
         let imageSize = bounds.size
-        let output: CIImage
+        let output: CIImage?
         switch kind {
         case .blur:
             let filter = CIFilter.gaussianBlur()
             filter.inputImage = input
             filter.radius = Float(blurRadius(imageSize: imageSize, region: target.size))
-            output = filter.outputImage ?? input
+            output = filter.outputImage
         case .pixelate:
             let filter = CIFilter.pixellate()
             filter.inputImage = input
             filter.scale = Float(pixelScale(imageSize: imageSize, region: target.size))
             filter.center = CGPoint(x: target.minX, y: target.minY)
-            output = filter.outputImage ?? input
+            output = filter.outputImage
         }
-        guard let rendered = context.createCGImage(output, from: target) else { return nil }
+        // Never fall back to the unfiltered input: nil makes the caller cover the region.
+        guard let output, let rendered = context.createCGImage(output, from: target) else { return nil }
         cache.store(rendered, rect: target, base: base, for: key)
         return (rendered, target)
     }

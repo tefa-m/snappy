@@ -20,8 +20,8 @@ enum WindowTrackingEvent: Equatable, Sendable {
 /// PURE W-mode tracking decisions — unit-tested. Every frame change is
 /// reported; `gone` is reported **exactly once** and nothing after it.
 ///
-/// **Only a window that is really gone ends the recording** (Q13 — Leader
-/// decision in review round 1, made final by Tefa on 2026-10-09): closed or
+/// **Only a window that is really gone ends the recording** (Q13 — design
+/// decision in review round 1, made final on 2026-10-09): closed or
 /// its app terminated. Off screen — minimised, on another Space, its app
 /// hidden — the recording keeps going until the person stops it (the
 /// pipeline re-appends the last frame with the ink; the menu bar's ● and

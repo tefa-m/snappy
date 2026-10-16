@@ -139,7 +139,7 @@ final class AnnotationCanvasView: NSView {
     /// body only the old 7 pt core grabs the handle, so a small selection
     /// keeps a body to move (an 18 pt effect is all handle at 10 pt). See
     /// `AnnotationGeometry.arbitrateHandle`. Overlapping handles resolve to
-    /// the nearest one. Canvas handles stay under the leader's 28 pt default
+    /// the nearest one. Canvas handles stay under the 28 pt control-size default
     /// on purpose: at 28 pt, anything under ~56 pt would be all handle.
     private static let handleHitRadius: CGFloat = 10
     private static let handleCoreHitRadius: CGFloat = 7

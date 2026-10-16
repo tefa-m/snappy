@@ -246,7 +246,7 @@ import Testing
         #expect(unclamped == CGRect(x: 150, y: 150, width: 200, height: 100))
     }
 
-    /// Sol review #1: an 18×18 pt selection is all handle at a 10 pt radius;
+    /// Review #1: an 18×18 pt selection is all handle at a 10 pt radius;
     /// the body must still win outside the 7 pt core.
     @Test func handleArbitrationKeepsTheBodyOfSmallSelections() {
         let rect = CGRect(x: 0, y: 0, width: 18, height: 18)

@@ -115,9 +115,23 @@ enum AnnotationRenderer {
         context.strokePath()
     }
 
-    private static func draw(_ effect: EffectAnnotation, in context: CGContext, base: CGImage) {
-        guard let (image, rect) = EffectRenderer.render(effect.kind, base: base, rect: effect.rect)
-        else { return }
+    /// Fails closed: when the effect can't be rendered (CoreImage produced
+    /// nothing), the region is covered with opaque grey instead of leaving the
+    /// source pixels visible. `render` is a seam for tests.
+    static func draw(
+        _ effect: EffectAnnotation, in context: CGContext, base: CGImage,
+        render: (EffectKind, CGImage, CGRect) -> (image: CGImage, rect: CGRect)? = {
+            EffectRenderer.render($0, base: $1, rect: $2)
+        }
+    ) {
+        guard let (image, rect) = render(effect.kind, base, effect.rect) else {
+            let bounds = CGRect(x: 0, y: 0, width: base.width, height: base.height)
+            context.saveGState()
+            context.setFillColor(CGColor(srgbRed: 0.5, green: 0.5, blue: 0.5, alpha: 1))
+            context.fill(effect.rect.integral.intersection(bounds))
+            context.restoreGState()
+            return
+        }
         context.saveGState()
         context.interpolationQuality = .none
         context.draw(image, in: rect)

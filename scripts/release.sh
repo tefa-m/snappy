@@ -4,7 +4,7 @@
 # Refuses unless on a clean, up-to-date `main` with a green test gate and an
 # unused tag; then creates the annotated tag v<version> and pushes main + tag.
 # The tag message holds the release notes (no CHANGELOG.md). Bump rules and the
-# whole flow: docs/features/versioning.md.
+# whole flow: features/versioning.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

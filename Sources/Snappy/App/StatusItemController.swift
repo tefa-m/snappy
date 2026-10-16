@@ -88,7 +88,7 @@ enum MagicPenThicknessMenu {
     }
 }
 
-/// What a click on the recording item does (Tefa, 2026-10-09: a plain click
+/// What a click on the recording item does (2026-10-09: a plain click
 /// stops — unchanged). A right-click, ⌃-click or ⌥-click opens the
 /// recording menu instead — PURE, unit-tested.
 enum RecordingStatusClick: Equatable {
@@ -125,7 +125,7 @@ enum RecordingStatusMenu {
 
 /// The menu bar item while a recording runs: a red ● and the elapsed time
 /// (`● 0:42`), a click stops it (`features/recording.md`, Recording chrome;
-/// Tefa 2026-10-09) — PURE, unit-tested. The menu bar is always on screen,
+/// 2026-10-09) — PURE, unit-tested. The menu bar is always on screen,
 /// so this is the indicator that stays visible when the recorded window or
 /// the toolbar is off screen.
 enum RecordingStatusGlyph {
@@ -307,7 +307,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
         (ticker.now() - start) / .seconds(1)
     }
 
-    /// The recording item: a plain click stops (Tefa, 2026-10-09); a
+    /// The recording item: a plain click stops (2026-10-09); a
     /// right-, ⌃- or ⌥-click opens the Magic Pen thickness + Stop menu.
     @objc private func recordingItemClicked() {
         // Only the click itself counts: anything else (VoiceOver press, a

@@ -299,7 +299,7 @@ enum RecordingTimerText {
     }
 
     /// The menu bar readout, as short as possible: `0:42`, `12:05`,
-    /// `1:02:03` (Tefa, 2026-10-09).
+    /// `1:02:03` (2026-10-09).
     static func compact(elapsed: TimeInterval) -> String {
         let (hours, minutes, seconds) = components(elapsed)
         if hours > 0 {

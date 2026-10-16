@@ -153,8 +153,8 @@ final class RecordingCoordinator {
     private var latestRetake: RetakeContext?
 
     /// What happens to a take whose capture failed mid-recording (disk full,
-    /// writer error): **discarded**, and the error alert shows (Tefa,
-    /// 2026-10-09 — final). `.salvage` would present whatever `stop()` still
+    /// writer error): **discarded**, and the error alert shows
+    /// (2026-10-09 — final). `.salvage` would present whatever `stop()` still
     /// returns; the pipeline supports it, the product doesn't want it.
     private enum FailedTakeHandling { case discard, salvage }
     private static let failedTakeHandling = FailedTakeHandling.discard

@@ -57,7 +57,7 @@ enum SetupGeometry {
         /// Arrow: move the rect.
         case nudge(CGVector)
         /// ⌥-arrow: move the right (→ ←) or top (↑ ↓) edge — the keyboard
-        /// route to resizing (Leader decision, shortcuts-first rule).
+        /// route to resizing (Design decision, shortcuts-first rule).
         case resize(CGVector)
     }
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Derives Snappy's version from git — the tag is the single source of truth
-# (docs/features/versioning.md). SOURCE this file; it sets:
+# (features/versioning.md). SOURCE this file; it sets:
 #
 #   SNAPPY_VERSION      nearest v<MAJOR>.<MINOR>.<PATCH> tag, number only (1.1.0)
 #                       — the only form CFBundleShortVersionString accepts

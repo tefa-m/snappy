@@ -182,7 +182,7 @@ enum RecordingHotKey: CaseIterable, Equatable {
 /// recording → what happens. Esc cancels; Tab leaves the field (and keeps moving focus); every
 /// other key becomes the new combo or is rejected with a reason.
 ///
-/// The combo must hold ⌃ or ⌥ (Leader decision, 2026-10-09): Carbon swallows
+/// The combo must hold ⌃ or ⌥ (Design decision, 2026-10-09): Carbon swallows
 /// it system-wide for the whole session, so a ⌘ shortcut like ⌘C would stop
 /// copy/paste working in the app being recorded.
 enum HotKeyRecorderInput {
@@ -251,7 +251,7 @@ enum HotKeyRecorderInput {
     }
 }
 
-/// Settings window sizing (Leader decision, T6 review round 1): the pane at its
+/// Settings window sizing (Design decision, T6 review round 1): the pane at its
 /// natural size whenever it fits the screen's visible frame — nothing changes
 /// then — otherwise clamped to that height with the content scrolling.
 enum SettingsPaneFit {

@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import Snappy
 
-/// Tefa 2026-10-09: while recording, the menu bar shows a red ● and the
+/// 2026-10-09: while recording, the menu bar shows a red ● and the
 /// elapsed time (`● 0:42`), ticking once per second on the toolbar timer's
 /// clock; a click stops.
 @Suite("Recording menu bar indicator")

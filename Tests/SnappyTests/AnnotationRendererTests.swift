@@ -348,6 +348,32 @@ import Testing
         #expect(sharpLight.g > 245)
     }
 
+    /// Fail closed: an effect that can't be rendered hides its region behind
+    /// opaque grey — never the source pixels — and leaves the rest alone.
+    @Test func effectThatFailsToRenderCoversItsRegionOpaquely() throws {
+        let style = AnnotationStyle(strokeColor: Self.pureRed, strokeWidth: 4, hasFill: false)
+        let effect = EffectAnnotation(
+            id: UUID(), kind: .blur, rect: CGRect(x: 30, y: 30, width: 40, height: 20), style: style
+        )
+        let base = halfBlackImage()
+        let context = try #require(CGContext(
+            data: nil, width: base.width, height: base.height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        context.draw(base, in: CGRect(x: 0, y: 0, width: base.width, height: base.height))
+        AnnotationRenderer.draw(effect, in: context, base: base, render: { _, _, _ in nil })
+        let result = try #require(context.makeImage())
+
+        // Both the black and the white half of the region become the same grey.
+        for x in [35, 48, 52, 65] {
+            let p = pixel(of: result, x: x, y: 40)
+            #expect(abs(Int(p.g) - 128) <= 2 && p.a == 255)
+        }
+        // Outside the region the boundary is untouched.
+        #expect(pixel(of: result, x: 48, y: 70).g < 10)
+        #expect(pixel(of: result, x: 51, y: 70).g > 245)
+    }
+
     @Test func pixelateChangesTheRegionAndNothingElse() throws {
         let style = AnnotationStyle(strokeColor: Self.pureRed, strokeWidth: 4, hasFill: false)
         // minX = 47 aligns the pixel blocks so 49 and 50 (across the sharp

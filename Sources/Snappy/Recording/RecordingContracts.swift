@@ -1,6 +1,6 @@
 import AppKit
 
-// The seams between the recording pieces (docs/RECORDING_PLAN.md). T0 owns this
+// The seams between the recording pieces (features/recording.md). T0 owns this
 // file; wave-1 tasks implement the protocols in their own files and never edit
 // it. `RecordingCoordinator` is the only caller of every protocol below and
 // talks to the pieces through them alone — the implementations are injected via
@@ -94,7 +94,7 @@ enum InkWidth: Int, CaseIterable, Comparable, Sendable {
     }
 
     /// Magic Pen stroke width in screen points: a step bolder than the
-    /// normal pen, so the fading ink is easy to see (leader decision).
+    /// normal pen, so the fading ink is easy to see (design decision).
     var magicPenPoints: CGFloat {
         switch self {
         case .thin: 4
@@ -146,7 +146,7 @@ enum InkCommand: Equatable, Sendable {
     }
 }
 
-/// The Magic Pen's fixed look (leader decision, Tefa to confirm) — PURE,
+/// The Magic Pen's fixed look (design decision, not yet confirmed) — PURE,
 /// tested. Smooth, slightly transparent, vivid, with a soft dark halo that
 /// keeps it visible on light content. Everything here is drawn through
 /// `InkRenderer`, so the screen and the video show the same pixels.

@@ -75,7 +75,7 @@ final class SettingsWindowController: NSObject {
         cursorCheckbox.target = self
         cursorCheckbox.action = #selector(cursorCheckboxToggled)
 
-        // Leader decision: ≥ 28 pt controls. `.large` is AppKit's own size for
+        // Design decision: ≥ 28 pt controls. `.large` is AppKit's own size for
         // that (push button 28 pt tall, stepper 23 × 30 pt, same 13 pt font);
         // the number field and the pop-up path control have no large variant
         // (measured 24 / 25 pt either way) and keep their native bezels.
@@ -457,7 +457,7 @@ final class RecordingSettingsSection: NSObject {
         partsStatusImage.setAccessibilityElement(false)
         partsStatusLabel.setAccessibilityLabel("Window parts")
 
-        // ≥ 28 pt controls (Leader decision, see the padding stepper above).
+        // ≥ 28 pt controls (Design decision, see the padding stepper above).
         for control in [
             countdownPopUp, frameRatePopUp, qualityPopUp, cursorCheckbox, clicksCheckbox,
             colorPopUp, widthPopUp, fadingCheckbox, fadeDelayStepper, hotKeyRecorder, hotKeyResetButton,

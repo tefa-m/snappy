@@ -72,7 +72,7 @@ struct MagicPenMenuTests {
         #expect(!MagicPenThicknessMenu.title.hasSuffix("…"), "a submenu, not a command needing input")
     }
 
-    @Test("A plain click on the recording ● stops (Tefa, 2026-10-09); right-, ⌃- or ⌥-click opens the menu")
+    @Test("A plain click on the recording ● stops (2026-10-09); right-, ⌃- or ⌥-click opens the menu")
     func clicks() {
         #expect(RecordingStatusClick.action(isRightClick: false, modifiers: []) == .stop)
         #expect(RecordingStatusClick.action(isRightClick: false, modifiers: [.capsLock]) == .stop)

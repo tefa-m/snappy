@@ -697,7 +697,7 @@ struct RecordingIntegrationTests {
         #expect(Set(h.notices.map(\.title)).count == 2, "distinct titles → distinct banner identifiers")
     }
 
-    // MARK: - Menu bar clock (Tefa 2026-10-09)
+    // MARK: - Menu bar clock (2026-10-09)
 
     @Test("The capture start is reported once, when the pipeline runs — the clock the menu bar and toolbar share")
     func captureStartIsReportedOnce() async throws {

@@ -270,7 +270,7 @@ struct RecordingSession: Equatable, Sendable {
         case (.draw, .toggleDrawMode), (.draw, .pointer), (.draw, .stepBack):
             phase = .recording(.interact)
 
-        // Magic Pen (leader decision, Tefa to confirm): ⌃⌥P toggles it on
+        // Magic Pen (design decision, not yet confirmed): ⌃⌥P toggles it on
         // from interact or draw mode and off again — back to where it came
         // from; Esc / Q do the same. V always hands the mouse back to the
         // user's app, and ⌃⌥D (whose toolbar toggle shows off here) switches
