@@ -2,7 +2,7 @@
 
 ## What it is
 
-Milestone M5 (priority P5), beefed up and made bendable in Post-MVP M-D: Shottr-style arrows in the editor. Drag spawns the arrow — mouse-down = tail, the head follows the cursor live via the canvas draft (one undo step on mouse-up).
+Milestone M5 (priority P5), beefed up and made bendable in Post-MVP M-D: arrows in the editor. Drag spawns the arrow — mouse-down = tail, the head follows the cursor live via the canvas draft (one undo step on mouse-up).
 
 - Rendered as ONE filled **tapered** polygon (Tefa's explicit "ergonomic" request): thin tail → shaft thickening to **2.0× strokeWidth visible width at the head end** → filled arrowhead (head length **6.0×** strokeWidth, barb half-width 0.45× head length, capped at 45% of the arrow so short arrows shrink proportionally)
 - **Rounded edges:** the polygon is stroked with a same-color round-join/round-cap stroke of 0.3× strokeWidth; the polygon half-widths are tuned with that outset subtracted — change them together or visible widths drift

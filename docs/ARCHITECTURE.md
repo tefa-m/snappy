@@ -123,7 +123,7 @@ Sources/Snappy/
                                  padding; may be negative-origin — unit-tested
     CanvasBackground.swift       PURE adaptive background: perimeter-window
                                  clustering → ONE uniform fill color
-                                 (Shottr-style, no edge smear). Rasterises only
+                                 (no edge smear). Rasterises only
                                  the four perimeter bands; consumers fill with
                                  `fillColor.cgColor` directly — tested
     ArrowGeometry.swift          PURE arrow math: tapered outline polygon
@@ -808,7 +808,7 @@ is still a transparent `NSWindow`.
   the original image to nothing. Newly exposed area is filled by
   `CanvasBackground` with **one uniform color** detected from the screenshot
   perimeter (dominant-cluster of low-variance, corner-weighted windows —
-  Shottr-style; the earlier per-edge smear was rejected after manual testing;
+  the earlier per-edge smear was rejected after manual testing;
   cached per image, invalidated on crop). Detection rasterises **only the four
   perimeter bands** (cropped out of the image), never the whole bitmap, and
   export samples the background only when the canvas actually grew. Crop stays
@@ -871,7 +871,7 @@ is still a transparent `NSWindow`.
   ring (20 pt target, HIG macOS minimum) only where the point is not on an
   annotation body (`AnnotationGeometry.arbitrateHandle`), so small
   selections keep a body to move.
-- The editor has **one unified Shottr-style header**: the window is
+- The editor has **one unified header**: the window is
   `titleVisibility = .hidden` with an `NSToolbar` (`.unified` since the
   2026-10-08 HIG pass — 52 pt bar, 36×36 pt system items; `.unifiedCompact`
   gave 24 pt items, below the HIG 28 pt default), so the traffic lights and all

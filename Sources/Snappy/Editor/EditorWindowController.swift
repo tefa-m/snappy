@@ -54,7 +54,7 @@ enum EditorAction: CaseIterable {
 }
 
 /// The annotation editor (M4–M6), in the Tahoe Glass look (2026-10-08): one
-/// unified Shottr-style header — the macOS window controls and all actions
+/// unified header — the macOS window controls and all actions
 /// share a single titlebar (`NSToolbar`, `.unified`: 36 pt system hit
 /// targets — `.unifiedCompact` gives 24 pt) whose Liquid Glass groups float
 /// over the AnnotationCanvasView (full-size content view, transparent
@@ -166,7 +166,7 @@ final class EditorWindowController: NSObject {
         window.contentView = container
         window.setContentSize(canvasSize)
 
-        // One unified Shottr-style header: window controls + actions share the
+        // One unified header: window controls + actions share the
         // titlebar; every control is its own NSToolbarItem. `.unified` (52 pt
         // bar, 36×36 pt items) rather than `.unifiedCompact` (40 pt bar,
         // 24 pt items): HIG default macOS control size is 28 pt.

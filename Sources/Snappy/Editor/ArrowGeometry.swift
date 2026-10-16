@@ -14,7 +14,7 @@ import Foundation
 enum ArrowGeometry {
 
     // Proportions of the tapered arrow, relative to strokeWidth (the shaft
-    // thickness at the head end). Tuned to Shottr's look: a thin tail growing
+    // thickness at the head end). Tuned for a clean look: a thin tail growing
     // into a full-width shaft that flares into a filled triangular head.
     // Post-MVP M-D made the arrow beefier: bigger head, thicker head-end shaft.
     private static let headLengthFactor: CGFloat = 6.0

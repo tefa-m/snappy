@@ -31,7 +31,7 @@ Testing strategy: **Swift Testing** only (XCTest doesn't exist under CLT). UI-he
 ## Log
 
 - **2026-07-17** — M0 done. CLT quirk discovered: `Testing.framework` ships outside the default search paths → `scripts/test.sh` created
-- **2026-07-18** — App named **Snappy** (module `Snappy`, bundle id `com.tefa.snappy`, `dist/Snappy.app`); repo folder stays `shottr-clone`
+- **2026-07-18** — App named **Snappy** (module `Snappy`, bundle id `com.tefa.snappy`, `dist/Snappy.app`); repo folder is `snappy`
 - **2026-07-19** — macOS 26 retarget: swift-tools-version 6.0 → 6.2 (minimum that offers `.macOS(.v26)`), `platforms: [.macOS(.v26)]`, `LSMinimumSystemVersion = 26.0` in bundle.sh + verify-bundle.sh. Zero `#available` gates existed, so no code cleanup was needed
 - **2026-07-18** — Ad-hoc signing broke Screen Recording after a rebuild (TCC pins ad-hoc grants to the binary's cdhash; the System Settings toggle looks ON but capture is denied). Fix: `setup-signing.sh` + "Snappy Dev" identity; done on this machine, capture re-verified. Script gotcha: must use `/usr/bin/openssl` (LibreSSL) and import PEM directly — Homebrew OpenSSL 3's PKCS#12 output is rejected by `security import`
 - **2026-10-08** — Review pass: `install.sh` stages the new bundle as `Snappy.app.new` next to the destination, verifies it, and only then swaps it in — a failed `ditto` (disk full, cancelled sudo) no longer leaves the machine without an app. `generate-icons.swift`'s alpha-mask context now owns its backing store (output byte-identical to the committed menu bar PNGs); the pixel-sampling test helper keeps its context inside the buffer borrow. Swift tests: 204.

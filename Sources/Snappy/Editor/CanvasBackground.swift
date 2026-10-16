@@ -3,7 +3,7 @@ import Foundation
 
 /// Adaptive background for the auto-expanding canvas (Post-MVP M-F): fills the
 /// area outside the screenshot with a **single, clean, uniform color** derived
-/// from the screenshot's perimeter — the way Shottr fills expanded canvas.
+/// from the screenshot's perimeter, so the expanded canvas blends in.
 ///
 /// The earlier design extended each edge pixel outward at its own coordinate,
 /// which smeared every color variation, wood grain, and dark divider into long

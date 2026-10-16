@@ -2,7 +2,7 @@
 
 ## What it is
 
-Milestone M6 (priority P6): everyday-Shottr annotation parity in the editor. Tool shortcuts **L/P/T/N/B/X/C** (line/pen/text/counter/blur/pixelate/crop).
+Milestone M6 (priority P6): everyday annotation parity in the editor. Tool shortcuts **L/P/T/N/B/X/C** (line/pen/text/counter/blur/pixelate/crop).
 
 - **Line** — reuses `ArrowAnnotation` with `kind: .line` (plain round-cap stroke, no head); same endpoint handles and drag mechanics as [arrows](arrow-tool.md)
 - **Freehand pen** — smoothed path from drag points (pure `FreehandGeometry`: point thinning, midpoint-quad smoothing, polyline hit-testing)
@@ -15,7 +15,7 @@ Pure logic in `TextGeometry` / `FreehandGeometry` / `CounterGeometry` / `EffectR
 
 ## Log
 
-- **2026-07-18** — M6 implemented: full Shottr-style tool parity. T was reserved for the text tool since the M4 UX round
+- **2026-07-18** — M6 implemented: full tool parity. T was reserved for the text tool since the M4 UX round
 - **2026-07-18** — Toolbar UX round (see [editor.md](editor.md)): per-action items, native "…" overflow, Pin in the editor
 - **2026-10-08** — Review pass: **crop now drops annotations wholly outside the crop** (`expandedBounds` ∩ crop = ∅; undo restores them) — the derived canvas used to re-expand over the cropped-away area, so "render clipped" was no longer true; partially overlapping ones are kept intact. Text: Copy/Save/Pin commit a label still being typed (`commitPendingEdits`); a style change mid-typing applies live and to the label on commit; the field follows window resizes; editing an out-of-image label no longer refits the canvas. Arrow endpoint drags re-clamp the bow. Blur/pixelate results are cached (`EffectCache`).
 
