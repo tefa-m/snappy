@@ -25,7 +25,7 @@ Straight **lines** reuse `ArrowAnnotation` with `kind: .line` and never set `bow
 - **2026-07-18** — M5 implemented; two UX feedback rounds applied: shaft thickened toward the head (1.5× at the head end, bumped from 1× after "thicker towards the end"), rounded edges/corners (tail tip, barbs, apex)
 - **2026-07-19** — Post-MVP M-D: bigger head (4.5→6.0× length, 0.4→0.45 barb ratio), thicker head-end shaft (visible 1.5→2.0× strokeWidth), scalar-`bow` curve model with third bend handle, snap-to-straight zone, head on the end tangent
 
-- **2026-10-08** — HIG design pass ([review](../docs/design-reviews/editor-canvas.md)): handle hit region 14 → **20 pt** (HIG macOS minimum; visible handles stay 8 pt, overlaps resolve to the nearest handle) — after the Sol review, the outer 7–10 pt ring applies only off the annotation's body, so a short arrow can still be moved by its shaft; the pointer over endpoint and bend handles is the **crosshair** instead of the pointing hand (the HIG's link pointer). Arrow shape unchanged — it is the editor's signature.
+- **2026-10-08** — HIG design pass (review): handle hit region 14 → **20 pt** (HIG macOS minimum; visible handles stay 8 pt, overlaps resolve to the nearest handle) — after the Sol review, the outer 7–10 pt ring applies only off the annotation's body, so a short arrow can still be moved by its shaft; the pointer over endpoint and bend handles is the **crosshair** instead of the pointing hand (the HIG's link pointer). Arrow shape unchanged — it is the editor's signature.
 
 ## Manual checklist — M5 base ✅ verified (Tefa, 2026-07-18)
 

@@ -21,7 +21,7 @@ Milestone M3 (priority P3): the panel's OCR action recognizes text in the captur
 
 ## Manual checklist — HIG design pass (2026-10-08, unverified)
 
-Review: [`docs/design-reviews/shell.md`](../docs/design-reviews/shell.md) (#8 Alerts & notifications).
+Review: `docs/design-reviews/shell.md` (#8 Alerts & notifications).
 
 - [ ] OCR of text → banner title **Text Copied**, body is the one-line preview
 - [ ] OCR twice → Notification Center shows only the latest OCR banner, not both

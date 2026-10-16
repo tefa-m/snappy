@@ -1,4 +1,28 @@
+# Build output
 .build/
 dist/
-.DS_Store
 assets/generated/*.iconset/
+
+# Per-user editor / SwiftPM state (Xcode creates these when opening Package.swift).
+# *.xcodeproj is deliberately NOT ignored: the project is SPM-only, so a generated
+# project should show up in review instead of being hidden.
+.swiftpm/
+xcuserdata/
+*.xcuserstate
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Local agent / editor settings
+.claude/settings.local.json
+.vscode/
+
+# Never commit secrets or signing material
+.env
+.env.*
+*.p12
+*.pem
+*.key
+*.cer
+*.mobileprovision

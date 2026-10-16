@@ -1,22 +1,10 @@
 # Recording — Screen Video with Live Annotations
 
-> **Status: implemented (2026-10-09) — manual checklist pending.** The whole design was settled
-> with Tefa in a grilling session (decision log below) and built as parallel tasks
-> ([`docs/RECORDING_PLAN.md`](../docs/RECORDING_PLAN.md), reports in `docs/recording-reviews/`),
-> integrated in T7. Module map, flow and invariants: [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)
-> › Recording. Tefa settled the last open questions on 2026-10-09 (decision log).
->
-> **v2 (designed 2026-10-11) — implemented, manual checklists pending.** ✅ **V1:** stopping
-> opens a persistent **recording window** instead of the transient preview panel. ✅ **V2:**
-> pressing S/W again steps back instead of confirming, and S/W snap mode picks **window parts**
-> (page area, tab strip, sidebar …) through Accessibility. ✅ **V3:** W + part is recorded as
-> the window's stream **cropped live** to the part, Retake restores the part, ink outside the
-> part is hidden. All three implemented 2026-10-11. See [v2 — Recording window & window parts](#v2--recording-window--window-parts-designed-2026-10-11-implemented)
-> (decisions Q28–Q44). Sections marked *superseded by v2* describe the v1 build.
->
-> **Magic Pen (2026-10-15) — implemented, manual checklist pending.** ⌃⌥P while recording
-> draws smooth, slightly transparent ink that fades on its own; thickness from the menu bar.
-> Built on leader decisions that **Tefa still has to confirm**. See [Magic Pen](#magic-pen-2026-10-15--leader-decisions-tefa-to-confirm).
+> **Status:** implemented and covered by automated tests; the manual on-screen checklists at the end
+> of this doc are still pending. v1 (2026-10-09) records an area or a window with live ink; v2
+> (2026-10-11) adds the persistent recording window, S/W snap keys and Accessibility-based window
+> parts; the [Magic Pen](#magic-pen-2026-10-15) (2026-10-15) adds fading ink whose defaults still await
+> the author's confirmation. Invariants: [`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) › Recording.
 
 ## What it is
 
@@ -105,7 +93,7 @@ One display per recording (Q11): the rect is clamped to its display, and snappin
 | **⌘Z / ⇧⌘Z** | Undo / redo stroke | |
 | **1–5** | Colour presets | red, yellow, green, blue, white |
 | **[ / ]** | Line width thin / medium / thick | in Magic Pen mode: the Magic Pen thickness |
-| **⌃⌥P** | Magic Pen on / off (while recording) | fading ink with its own look — see [Magic Pen](#magic-pen-2026-10-15--leader-decisions-tefa-to-confirm) |
+| **⌃⌥P** | Magic Pen on / off (while recording) | fading ink with its own look — see [Magic Pen](#magic-pen-2026-10-15) |
 
 - Tool letter keys work in **Setup** and in **draw mode while recording**. They never work in interact mode, so typing a URL or text in your app is always safe (Q15/Q23).
 - **Setup annotations are permanent** (they never fade). **Fading ink** applies only to strokes drawn while recording: they fade out after the fade delay (Settings, default 3 s).
@@ -255,8 +243,8 @@ shows a chip with the part's name and size, e.g. `Web page · 1280 × 720`, `Win
 - **Retake (Q41)** restores the same part. If it's gone, W falls back to the **whole window**
   and S to the **last screen rect**.
 
-**Permission (Q34/Q39):** Accessibility is a second TCC permission. On the managed company
-laptop it may need IT approval.
+**Permission (Q34/Q39):** Accessibility is a second TCC permission. On a Mac managed by an MDM
+profile, an administrator may have to allow it.
 - The **first time S/W snap mode is entered without access**, the macOS prompt is shown **once**
   (`AXIsProcessTrustedWithOptions`). That session carries on with whole windows, and Snappy
   never prompts automatically again.
@@ -306,7 +294,7 @@ READY TO MERGE). All are minor and non-blocking, and none is fixed yet:
    activation)", or, if a passive auto-stop is wanted, pass the stop origin to the window and only
    order it front for that route.
 
-### Implementation outline (draft)
+### Implementation outline (as planned)
 
 1. **Recording window**: a `RecordingWindowController` (titled, Tahoe Glass, owned in an array
    like `editors`) replaces `RecordingPreviewPanel` behind `RecordingPreviewPresenting`.
@@ -341,13 +329,13 @@ READY TO MERGE). All are minor and non-blocking, and none is fixed yet:
 | Magic Pen hot key | recorder field (⌃ or ⌥ required; refuses ⌃⌥D / Snappy's hot keys) | **⌃⌥P** |
 | Magic Pen thickness | Thin / Medium / Thick — **also in the menu bar**, applied live | **Medium** |
 
-## Magic Pen (2026-10-15) — leader decisions, Tefa to confirm
+## Magic Pen (2026-10-15)
 
 **Tefa's request:** "a magic pen for recording: annotate freely while recording, the ink fades
 away after marking something. Smooth, easy to see, slightly transparent. Thickness adjustable
 from the menu bar. A convenient shortcut that works while recording and uses no single plain
-character." Tefa didn't answer the clarifying questions, so the leader chose the defaults below.
-**Every row of the decision table is a leader decision that Tefa still has to confirm.**
+character." The clarifying questions were left open, so the defaults below were chosen during
+implementation. **Every row of the decision table is a default that the author still has to confirm.**
 
 ### How it works
 
@@ -385,7 +373,7 @@ hint underneath. Unlike the other Recording rows the pop-up goes through the coo
 menu bar does, so a running session picks the new thickness up for its next stroke; an open
 Settings window follows a change made from the menu bar, [ ] or the toolbar.
 
-### Decision table (leader decisions, Tefa to confirm)
+### Decision table (defaults, awaiting the author's confirmation)
 
 | # | Decision | Alternatives not taken |
 | - | -------- | ---------------------- |

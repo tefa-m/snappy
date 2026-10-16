@@ -41,7 +41,7 @@ Testing strategy: **Swift Testing** only (XCTest doesn't exist under CLT). UI-he
 
 ## Manual checklist — HIG design pass (2026-10-08, unverified)
 
-Review: [`docs/design-reviews/shell.md`](../docs/design-reviews/shell.md). Nothing below was looked at — no app launch was possible during the pass.
+Review: `docs/design-reviews/shell.md`. Nothing below was looked at — no app launch was possible during the pass.
 
 **Menu bar menu**
 - [ ] Items read **Capture Area… · Capture Window… · Capture Entire Screen · Settings… · Quit Snappy**, with separators before Settings and Quit

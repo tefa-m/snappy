@@ -86,7 +86,7 @@ AnnotationCanvasView (tracking area, mouseMoved)
 - **2026-07-19** — Fix (Tefa's manual testing): keyboard tool switches left a
   stuck arrow cursor — the `tool` didSet invalidated cursor rects while the
   feature was ON; the invalidation is now gated on the setting being OFF.
-- **2026-10-08** — HIG design pass ([review](../docs/design-reviews/editor-canvas.md)): arrow/line handles show the system **crosshair** (was the pointing hand — the HIG's link pointer); **press feedback** — `CursorGeometry.pressed` closes the open hand while an annotation is moved, and mouse-up re-decides the cursor (it used to stay stale until the next mouse move); every real tool switch is **announced to VoiceOver** (the flash is visual only). Selection-handle hit radius 7 → 10 pt (20 pt target).
+- **2026-10-08** — HIG design pass (review): arrow/line handles show the system **crosshair** (was the pointing hand — the HIG's link pointer); **press feedback** — `CursorGeometry.pressed` closes the open hand while an annotation is moved, and mouse-up re-decides the cursor (it used to stay stale until the next mouse move); every real tool switch is **announced to VoiceOver** (the flash is visual only). Selection-handle hit radius 7 → 10 pt (20 pt target).
 - **2026-07-19** — Fix 2 (still reproducible): other re-evaluation triggers
   (toolbar selection redraw, flash-label subview) reset the pointer the same
   way. The canvas now handles `.cursorUpdate` and re-asserts the cursor

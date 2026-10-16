@@ -3,6 +3,8 @@
 > **Maintenance contract:** this file MUST be read before implementing any change,
 > and MUST be updated in the same change whenever the architecture shifts
 > (new module, new flow, new invariant, changed responsibility).
+>
+> Dated notes below name the author (Tefa), the AI-agent workflow (Leader, Sol, task IDs) and internal review documents that are not in this repository — see [`FEATURE_MAP.md` › Reading the history logs](FEATURE_MAP.md#reading-the-history-logs).
 
 ## Overview
 
@@ -1516,7 +1518,7 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
 | Screen Recording TCC | Tied to bundle id `com.tefa.snappy`; renaming/re-identifying the app re-prompts. First `SCShareableContent` call triggers the prompt; denial throws `SCStreamError.userDeclined` → alert deep-links `x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture` |
 | Cooperative activation | See overlay invariant #1. Area capture now activates **after** the freeze `await` — deliberately, since activating first destroys the transient UI being captured. Correctness no longer depends on it: the overlay is a `.nonactivatingPanel` that takes key status without activation, plus one deferred retry. Activation remains needed to end a foreign `NSMenu`'s modal tracking loop. Recheck "Esc while another app is frontmost" after OS updates |
 | Hot keys during foreign menu tracking | Both hot keys must fire while another app's `NSMenu` holds its tracking loop — the whole frozen-capture feature depends on it. If a future macOS starves `RegisterEventHotKey` there, the only alternative is a `CGEventTap` (Accessibility permission). Separately: `RegisterEventHotKey` swallows the ⇧⌘4 keystroke, but the ⇧/⌘ `flagsChanged` events still reach the frontmost app and can dismiss a **tooltip** before the hot key fires — nothing in the freeze design can fix that; isolate it by temporarily binding a modifier-free combo |
-| Accessibility TCC (window parts) | A second permission besides Screen Recording, tied to the app's signature like it (the "Snappy Dev" identity keeps it across rebuilds); may need IT approval on the company laptop. Prompted once from the first S/W snap mode (`WindowPartAccess`); Settings → Recording shows the status. A terminal-launched `swift test` inherits the terminal's grant |
+| Accessibility TCC (window parts) | A second permission besides Screen Recording, tied to the app's signature like it (the "Snappy Dev" identity keeps it across rebuilds); on an MDM-managed Mac an administrator may have to allow it. Prompted once from the first S/W snap mode (`WindowPartAccess`); Settings → Recording shows the status. A terminal-launched `swift test` inherits the terminal's grant |
 | Desktop folder TCC | First Save to ~/Desktop can trigger the "Files and Folders" permission prompt (separate from Screen Recording) |
 | `LSUIElement = true` | No Dock icon; `.accessory` policy is also set at runtime for `swift run` |
 | No main menu | AppKit routes ⌘W and ⌘X/⌘C/⌘V/⌘A through the main menu, so **any window Snappy shows must handle them itself** (Settings: `SettingsWindow` + `SettingsKeyCommand` handles ⌘W and ⌘X/C/V/A; the editor's canvas `performKeyEquivalent` handles ⌘C/⌘S/⌘P/⌘Z but **not ⌘W yet** — the editor closes with Q/Esc or the close button; the recording window handles ⌘S/⌘C/⇧⌘C/⌘W in its window's `performKeyEquivalent`; the ink view handles ⌘Z/⇧⌘Z; Settings' draw-mode recorder gets every key equivalent first while it records). The status menu's key equivalents only work while it is open |
