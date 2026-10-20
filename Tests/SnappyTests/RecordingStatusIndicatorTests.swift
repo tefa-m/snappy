@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import AppKit
 import Foundation
 import Testing
@@ -26,7 +27,7 @@ struct RecordingStatusIndicatorTests {
         #expect(RecordingStatusGlyph.title(elapsed: 3723) == "1:02:03")
         #expect(RecordingStatusGlyph.accessibilityLabel(elapsed: 42) == "Recording, 0:42, click to stop")
         #expect(RecordingStatusGlyph.symbolName == "circle.fill")
-        #expect(RecordingStatusGlyph.toolTip == "Stop recording (⇧⌘4)")
+        #expect(RecordingStatusGlyph.toolTip(stopCombo: .defaultCapture) == "Stop recording (⇧⌘4)")
     }
 
     @Test("Ticks land on whole seconds since the start, once per second")
@@ -91,6 +92,7 @@ struct StatusItemControllerRecordingTests {
         let item = FakeStatusItem()
         let clock = TestClock()
         let controller: StatusItemController
+        let hotKeys: GlobalHotKeys
         var errors = 0
         private let defaults: UserDefaults
         private let suiteName = "SnappyTests.StatusItem.\(UUID().uuidString)"
@@ -99,9 +101,10 @@ struct StatusItemControllerRecordingTests {
         init() {
             defaults = UserDefaults(suiteName: suiteName)!
             captureCoordinator = CaptureCoordinator(settings: SettingsStore(defaults: defaults), recording: harness.coordinator)
+            hotKeys = GlobalHotKeys(settings: SettingsStore(defaults: defaults), center: nil)
             controller = StatusItemController(
                 captureCoordinator: captureCoordinator, recordingCoordinator: harness.coordinator,
-                statusItem: item, ticker: clock.ticker
+                globalHotKeys: hotKeys, statusItem: item, ticker: clock.ticker
             )
             // No alert in tests; count the reports instead.
             harness.coordinator.onError = { [weak self] _ in self?.errors += 1 }
@@ -172,7 +175,8 @@ struct StatusItemControllerRecordingTests {
         #expect(f.button.accessibilityLabel() == "Recording, \(title), click to stop", sourceLocation: sourceLocation)
         #expect(f.button.image?.isTemplate == false, sourceLocation: sourceLocation)
         #expect(f.button.imagePosition == .imageLeading, sourceLocation: sourceLocation)
-        #expect(f.button.toolTip == RecordingStatusGlyph.toolTip, sourceLocation: sourceLocation)
+        #expect(f.button.toolTip == RecordingStatusGlyph.toolTip(stopCombo: f.hotKeys.bindings.captureArea),
+                sourceLocation: sourceLocation)
         #expect(f.button.target === f.controller && f.button.action != nil, sourceLocation: sourceLocation)
     }
 
@@ -207,6 +211,26 @@ struct StatusItemControllerRecordingTests {
         f.clock.advance(seconds: 1)
         await settle()
         expectNormal(f, "no stale tick after Stop")
+    }
+
+    /// Review r1 #4: the ●'s tooltip names the live Capture Area combo — read
+    /// on entering recording, and updated when it is remapped mid-session.
+    @Test func theStopTooltipFollowsTheCaptureAreaCombo() {
+        let f = Fixture()
+        defer { f.cleanUp() }
+        let before = HotKeyCombo(keyCode: UInt32(kVK_ANSI_5), carbonModifiers: UInt32(cmdKey | optionKey))
+        #expect(f.hotKeys.set(.captureArea, to: before) == nil)
+        #expect(f.record())
+        #expect(f.button.toolTip == "Stop recording (⌥⌘5)")
+        let during = HotKeyCombo(keyCode: UInt32(kVK_ANSI_6), carbonModifiers: UInt32(controlKey | cmdKey))
+        #expect(f.hotKeys.set(.captureArea, to: during) == nil)
+        #expect(f.button.toolTip == "Stop recording (⌃⌘6)")
+        #expect(f.hotKeys.set(.captureFullscreen, to: before) == nil, "another hot key leaves it alone")
+        #expect(f.button.toolTip == "Stop recording (⌃⌘6)")
+        f.harness.coordinator.handle(.command(.cancel))
+        #expect(f.button.toolTip == nil)
+        #expect(f.hotKeys.set(.captureArea, to: .defaultCapture) == nil)
+        #expect(f.button.toolTip == nil, "no ● — nothing to update")
     }
 
     @Test func cancelRestoresTheNormalItem() async {

@@ -137,10 +137,14 @@ enum RecordingStatusGlyph {
     }
 
     static let symbolName = "circle.fill"
-    /// HIG Offering help: what a click does, and the hot key that does the same.
+    /// HIG Offering help: what a click does, and the hot key that does the
+    /// same — the Capture Area combo as configured (`stopCombo`), read on
+    /// entering recording and again whenever it changes.
     /// (The right-click menu is named in Settings → Recording's Magic Pen hint
     /// and offered to VoiceOver as `menuActionName`.)
-    static let toolTip = "Stop recording (⇧⌘4)"
+    static func toolTip(stopCombo: HotKeyCombo) -> String {
+        "Stop recording (\(stopCombo.displayString))"
+    }
     /// VoiceOver's custom action on the item (the right-click menu).
     static let menuActionName = "Magic Pen Thickness"
     static let accessibilityDescription = "Recording"
@@ -240,6 +244,12 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
         recordingCoordinator.onMagicPenWidthChange = { [weak self] width in
             self?.settingsWindowController?.showMagicPenWidth(width)
         }
+        // A Capture Area remap (or a layout switch) mid-recording: the red ●
+        // must not advertise a dead stop shortcut.
+        globalHotKeys.onChange.append { [weak self] hotKey, combo in
+            guard let self, hotKey == .captureArea, self.showingStop else { return }
+            self.statusItem.button?.toolTip = RecordingStatusGlyph.toolTip(stopCombo: combo)
+        }
     }
 
     /// While recording the status item is a red ● plus the elapsed time,
@@ -255,7 +265,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
             button.imagePosition = .imageLeading
             // Monospaced digits: the item only widens when a digit is added.
             button.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-            button.toolTip = RecordingStatusGlyph.toolTip
+            button.toolTip = RecordingStatusGlyph.toolTip(stopCombo: globalHotKeys.bindings.captureArea)
             button.target = self
             button.action = #selector(recordingItemClicked)
             // A right-click sends the action too; `RecordingStatusClick`

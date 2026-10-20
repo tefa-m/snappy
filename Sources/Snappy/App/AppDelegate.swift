@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -44,7 +45,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKeys.onChange.append { hotKey, combo in
             if hotKey == .captureArea { recording.captureHotKeyDidChange(combo) }
         }
+        hotKeys.onStatusChange.append { recording.refreshHotKeyLabels() }
         globalHotKeys = hotKeys
+        // Labels follow the keyboard layout (`KeyLegend`); the key codes —
+        // what Carbon binds — don't change.
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(keyboardLayoutDidChange),
+            name: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String), object: nil
+        )
+        // Coming back to Snappy retries a combo another app had taken.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(applicationDidBecomeActive),
+            name: NSApplication.didBecomeActiveNotification, object: nil
+        )
         statusItemController = StatusItemController(
             captureCoordinator: coordinator, recordingCoordinator: recording, globalHotKeys: hotKeys
         )
@@ -53,6 +66,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // as fast as the rest. A no-op until a capture has succeeded once —
         // otherwise this would trigger the Screen Recording prompt at login.
         CaptureEngine.primeShareableContentCache()
+    }
+
+    @objc private func keyboardLayoutDidChange() {
+        globalHotKeys?.keyboardLayoutDidChange()
+        recordingCoordinator?.refreshHotKeyLabels()
+    }
+
+    @objc private func applicationDidBecomeActive() {
+        globalHotKeys?.retryUnbound()
     }
 
     /// Quit Snappy (menu or system): put back what a recording session
