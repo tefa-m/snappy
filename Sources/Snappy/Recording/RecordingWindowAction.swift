@@ -5,9 +5,12 @@ import AppKit
 /// player's own controls play/pause, and the traffic light closes).
 ///
 /// Unlike the screenshot panel, Copy and Save need ⌘ here (Q24): plain C / S
-/// do nothing, so the only bare letters are R (Retake) and Q (Close).
+/// do nothing, so the only bare letters are R (Retake) and Q (Close). `[` / `]`
+/// step the status capsule's export-size slider (no clash: the recording
+/// session's own `[` `]` — `RecordingKeyMap` — only reach the Setup overlay
+/// and the ink panel, never this window).
 enum RecordingWindowAction: CaseIterable, Equatable {
-    case playPause, retake, save, copy, close
+    case playPause, retake, save, copy, close, smallerExport, largerExport
 
     /// The toolbar buttons, leading to trailing: Retake after the traffic
     /// lights, then Save and the prominent Copy at the trailing edge — Copy
@@ -21,6 +24,8 @@ enum RecordingWindowAction: CaseIterable, Equatable {
         case .save: "Save"
         case .copy: "Copy"
         case .close: "Close"
+        case .smallerExport: "Decrease Export Size"
+        case .largerExport: "Increase Export Size"
         }
     }
 
@@ -32,6 +37,8 @@ enum RecordingWindowAction: CaseIterable, Equatable {
         case .save: "square.and.arrow.down"
         case .copy: "document.on.document"
         case .close: "xmark"
+        case .smallerExport: "arrow.down.right.and.arrow.up.left"
+        case .largerExport: "arrow.up.left.and.arrow.down.right"
         }
     }
 
@@ -43,6 +50,8 @@ enum RecordingWindowAction: CaseIterable, Equatable {
         case .save: "⌘S"
         case .copy: "⇧⌘C"
         case .close: "Esc"
+        case .smallerExport: "["
+        case .largerExport: "]"
         }
     }
 
@@ -56,6 +65,8 @@ enum RecordingWindowAction: CaseIterable, Equatable {
         case .save: "Save MP4 to \(saveFolderName)"
         case .copy: "Copy video file and close"
         case .close: "Close without saving"
+        case .smallerExport: "Smaller export"
+        case .largerExport: "Larger export"
         }
         return "\(description) (\(keyLabel))"
     }
@@ -63,7 +74,7 @@ enum RecordingWindowAction: CaseIterable, Equatable {
     /// The action a key press triggers, nil when the window ignores it.
     /// `characters` is `charactersIgnoringModifiers`.
     ///
-    /// - Space, R, Q and Esc are bare keys (`ShortcutKeys.isBareKey`: Shift and
+    /// - Space, R, Q, Esc, `[` and `]` are bare keys (`ShortcutKeys.isBareKey`: Shift and
     ///   Caps Lock tolerated).
     /// - ⌘S saves. ⇧⌘C is the advertised Copy; plain ⌘C also works, as in the
     ///   editor. ⌘W closes — the app has no main menu, so every window handles
@@ -79,6 +90,8 @@ enum RecordingWindowAction: CaseIterable, Equatable {
             switch key {
             case "q": return .close
             case "r": return .retake
+            case "[": return .smallerExport
+            case "]": return .largerExport
             default: return nil
             }
         }

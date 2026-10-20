@@ -6,7 +6,8 @@ import AVKit
 /// one finished take, in the editor's Tahoe Glass look. The take plays in an
 /// `AVPlayerView` (autoplay, loop, muted, scrub bar) that is the canvas under
 /// a glass toolbar — Retake · Save · prominent Copy — with a glass status
-/// capsule "Recording W × H · 0:42" at the bottom.
+/// capsule "W × H · 0:42 · [export size slider] 50 % · ≤ 4.6 MB" at the
+/// bottom.
 ///
 /// - Opens frontmost with focus (the deliberate end of the session), like the
 ///   editor, and survives click-away and app switches. It opens
@@ -17,7 +18,14 @@ import AVKit
 ///   takes key if Snappy becomes active within `focusGrace` — unless a newer
 ///   operation runs by then (`RecordingWindowContext.mayTakeFocus`).
 /// - Space plays/pauses, R retakes, ⌘S saves (stays open), ⇧⌘C/⌘C copies
-///   and closes, Q / Esc / ⌘W / the traffic light close without a prompt.
+///   and closes, `[` / `]` step the export size, Q / Esc / ⌘W / the traffic
+///   light close without a prompt — Q / Esc / ⌘W during a re-encode cancel
+///   only the re-encode.
+/// - **Export size** (`ExportScale`): Save and Copy export at the slider's
+///   stop. 100 % is the take as is; a smaller stop re-encodes it into a
+///   separate file first (`RecordingTranscoder`, kept in `exportCache`), with
+///   progress on the pressed button. A failed re-encode exports nothing — it
+///   never falls back to the full-size take.
 /// - The window is this controller's, and the controller is the
 ///   coordinator's (an array, like the editors): `onClose` fires a run-loop
 ///   turn after any close, and the coordinator releases it there.
@@ -39,7 +47,27 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
     /// Owns the re-queuing for the loop; lives as long as the playback.
     private var looper: AVPlayerLooper?
     private let toolbar: NSToolbar
-    private let statusLabel = NSTextField(labelWithString: "")
+    // The status capsule: "W × H · 0:42 · [slider] 50 % · 18.4 MB".
+    private let infoLabel = NSTextField(labelWithString: "")
+    private let infoSeparator = NSTextField(labelWithString: "·")
+    private let scaleSlider = NSSlider()
+    private let scaleLabel = NSTextField(labelWithString: "")
+    private let sizeSeparator = NSTextField(labelWithString: "·")
+    private let sizeLabel = NSTextField(labelWithString: "")
+    /// The take's size, duration and frame rate once read (`apply`).
+    private var info: RecordingVideoInfo?
+    /// The take file's byte count, read when the window opens.
+    private var takeBytes: Int64?
+    /// The current export-size stop: Settings' default at open, then the
+    /// slider's — never written back.
+    private(set) var exportScale: ExportScale
+    /// This window's re-encodes (one at a time, removed on close).
+    private let exportCache = RecordingExportCache()
+    /// The re-encode running for a Save or Copy, if any.
+    private var encode: ExportEncode?
+    /// The last re-encode failed — shown in place of the size until the stop
+    /// changes or the next export starts.
+    private var exportFailure: ExportScale?
     private var loadTask: Task<Void, Never>?
     private let loadVideoInfo: @Sendable (URL) async -> RecordingVideoInfo
     /// Set once the window is on screen.
@@ -77,6 +105,7 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
         self.settings = settings
         self.focus = focus
         self.loadVideoInfo = loadVideoInfo
+        exportScale = settings.recordingExportScale
         canvas = RecordingCanvasView(player: player)
         // Shared toolbar identifiers sync their items between windows, so the
         // two layouts (with and without Retake) need their own.
@@ -142,7 +171,8 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
     /// finding 1: a deferred presentation could take focus during a newer
     /// recording or screenshot capture).
     private func present() {
-        statusLabel.stringValue = window.title
+        takeBytes = Self.fileSize(take)
+        refreshStatus()
         layOut(videoPoints: anchorRect.size)
         initialFrame = window.frame
         looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: take))
@@ -158,7 +188,8 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
         // Hidden in the titlebar, but VoiceOver, Mission Control and window
         // lists read it — and several recording windows can be open at once.
         window.title = RecordingWindowStatus.title(videoSize: info.size)
-        statusLabel.stringValue = RecordingWindowStatus.text(title: window.title, duration: info.duration)
+        self.info = info
+        refreshStatus()
         guard let size = info.size else { return } // no readable track: keep the area's shape
         let videoPoints = RecordingWindowLayout.pointSize(
             videoPixels: size, scale: Self.screen(for: anchorRect)?.backingScaleFactor ?? 2
@@ -256,6 +287,9 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
         guard isOpen else { return }
         isOpen = false
         loadTask?.cancel()
+        encode?.job.cancel()
+        encode = nil
+        exportCache.discard()
         endPendingFocus()
         looper?.disableLooping()
         looper = nil
@@ -265,34 +299,123 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
         Task { @MainActor [self] in onClose?() }
     }
 
-    /// The bottom status capsule: a passive readout that ignores the mouse,
-    /// as in the editor.
+    /// The bottom status capsule: the readout plus the export-size slider,
+    /// so — unlike the editor's — it takes the mouse.
     private func installStatusCapsule(in container: NSView) {
-        statusLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-        statusLabel.textColor = .secondaryLabelColor
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        for label in [infoLabel, infoSeparator, scaleLabel, sizeSeparator, sizeLabel] {
+            label.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+            label.textColor = .secondaryLabelColor
+            label.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        infoSeparator.setAccessibilityElement(false)
+        sizeSeparator.setAccessibilityElement(false)
 
-        let glass = RecordingStatusGlassView()
-        glass.cornerRadius = 14
+        // Four stops, snapping, 25 % at the left: [ and ] step it too.
+        scaleSlider.minValue = 0
+        scaleSlider.maxValue = Double(ExportScale.allCases.count - 1)
+        scaleSlider.numberOfTickMarks = ExportScale.allCases.count
+        scaleSlider.allowsTickMarkValuesOnly = true
+        scaleSlider.controlSize = .small
+        scaleSlider.target = self
+        scaleSlider.action = #selector(scaleSliderChanged)
+        scaleSlider.toolTip = "Change export size ([ ])"
+        scaleSlider.setAccessibilityLabel("Export size")
+        scaleSlider.translatesAutoresizingMaskIntoConstraints = false
+        // Wide enough for "100 %", so the size readout never shifts.
+        scaleLabel.alignment = .right
+        let widest = (ExportScale.full.title as NSString).size(withAttributes: [.font: scaleLabel.font as Any]).width
+        scaleLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: ceil(widest) + 2).isActive = true
+        scaleLabel.setAccessibilityElement(false) // the slider's value says it
+
+        let stack = NSStackView(views: [infoLabel, infoSeparator, scaleSlider, scaleLabel, sizeSeparator, sizeLabel])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 6
+        stack.setCustomSpacing(2, after: scaleSlider)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let glass = NSGlassEffectView()
+        glass.cornerRadius = RecordingWindowLayout.statusCapsuleHeight / 2
         let inner = NSView()
         inner.translatesAutoresizingMaskIntoConstraints = false
-        inner.addSubview(statusLabel)
+        inner.addSubview(stack)
         glass.contentView = inner
         glass.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(glass)
         NSLayoutConstraint.activate([
-            statusLabel.leadingAnchor.constraint(equalTo: inner.leadingAnchor, constant: 12),
-            statusLabel.trailingAnchor.constraint(equalTo: inner.trailingAnchor, constant: -12),
-            statusLabel.centerYAnchor.constraint(equalTo: inner.centerYAnchor),
+            // ≥ 28 pt hit target for the slider (Design direction).
+            scaleSlider.widthAnchor.constraint(equalToConstant: 96),
+            scaleSlider.heightAnchor.constraint(equalToConstant: 28),
+            stack.leadingAnchor.constraint(equalTo: inner.leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: inner.trailingAnchor, constant: -14),
+            stack.centerYAnchor.constraint(equalTo: inner.centerYAnchor),
             inner.topAnchor.constraint(equalTo: glass.topAnchor),
             inner.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
             inner.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
             inner.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
-            glass.heightAnchor.constraint(equalToConstant: 28),
+            glass.heightAnchor.constraint(equalToConstant: RecordingWindowLayout.statusCapsuleHeight),
             glass.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             glass.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
         ])
     }
+
+    /// The capsule for the current stop: the export's pixel size and the
+    /// duration, the slider, and the size — the real file's when one exists
+    /// at this stop, else the "≤" estimate; a failed re-encode's message in
+    /// its place.
+    private func refreshStatus() {
+        let source = ExportSizing.videoSize(pixels: info?.size)
+        let output = source.map { ExportSizing.videoSize(source: $0, scale: exportScale) }
+        infoLabel.stringValue = ExportSizeText.dimensionsAndDuration(videoSize: output, duration: info?.duration)
+        infoSeparator.isHidden = infoLabel.stringValue.isEmpty
+        scaleSlider.integerValue = exportScale.index
+        scaleSlider.setAccessibilityValueDescription(exportScale.title)
+        scaleLabel.stringValue = exportScale.title
+
+        if let exportFailure, exportFailure == exportScale {
+            sizeLabel.stringValue = ExportSizeText.failure
+            sizeLabel.textColor = .systemRed
+        } else {
+            let estimate = output.flatMap { size in
+                info?.duration.map { duration in
+                    ExportSizing.estimatedBytes(
+                        videoSize: size, framesPerSecond: ExportSizing.framesPerSecond(nominal: info?.framesPerSecond ?? 0),
+                        quality: settings.recordingQuality, duration: duration
+                    )
+                }
+            }
+            sizeLabel.stringValue = ExportSizeText.size(actual: actualBytes(at: exportScale), estimate: estimate)
+            sizeLabel.textColor = .secondaryLabelColor
+        }
+        sizeSeparator.isHidden = sizeLabel.stringValue.isEmpty
+    }
+
+    /// The real export's byte count at `scale`: the take at 100 %, else a
+    /// finished re-encode or a file saved at that stop.
+    private func actualBytes(at scale: ExportScale) -> Int64? {
+        if scale == .full { return takeBytes }
+        let file = exportCache.file(at: scale) ?? savedFiles.savedFile(for: take, scale: scale)
+        return file.flatMap(Self.fileSize)
+    }
+
+    /// Moves the slider's stop — a per-take choice, never saved to Settings.
+    private func setExportScale(_ scale: ExportScale) {
+        guard scale != exportScale else {
+            scaleSlider.integerValue = exportScale.index
+            return
+        }
+        exportScale = scale
+        exportFailure = nil
+        refreshStatus()
+    }
+
+    @objc private func scaleSliderChanged() {
+        setExportScale(ExportScale(index: Int(scaleSlider.doubleValue.rounded())))
+    }
+
+    // Test hooks: the capsule's readouts.
+    var statusInfoText: String { infoLabel.stringValue }
+    var statusSizeText: String { sizeLabel.stringValue }
 
     private var saveFolderName: String {
         FileManager.default.displayName(atPath: settings.saveDirectory.path)
@@ -326,7 +449,12 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
         case .copy:
             copyTake()
         case .close:
-            close()
+            // During a re-encode, Q / Esc / ⌘W cancel only the re-encode.
+            if encode != nil { cancelEncode() } else { close() }
+        case .smallerExport:
+            setExportScale(exportScale.stepped(by: -1))
+        case .largerExport:
+            setExportScale(exportScale.stepped(by: 1))
         }
     }
 
@@ -334,16 +462,65 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
     @objc private func saveTapped() { perform(.save) }
     @objc private func copyTapped() { perform(.copy) }
 
+    /// A ring filling clockwise from the top — a template image, so it tints
+    /// like the symbol it stands in for (white on the prominent Copy).
+    private static func progressImage(_ fraction: Double) -> NSImage {
+        let fraction = min(1, max(0, fraction.isFinite ? fraction : 0))
+        let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
+            let center = CGPoint(x: rect.midX, y: rect.midY)
+            let track = NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2))
+            track.lineWidth = 2
+            NSColor.black.withAlphaComponent(0.3).setStroke()
+            track.stroke()
+            let arc = NSBezierPath()
+            arc.appendArc(
+                withCenter: center, radius: rect.width / 2 - 2,
+                startAngle: 90, endAngle: 90 - 360 * max(0.02, fraction), clockwise: true
+            )
+            arc.lineWidth = 2
+            arc.lineCapStyle = .round
+            NSColor.black.setStroke()
+            arc.stroke()
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
+    private static func symbolImage(for action: RecordingWindowAction) -> NSImage {
+        let image = NSImage(systemSymbolName: action.symbolName, accessibilityDescription: action.title) ?? NSImage()
+        return image.withSymbolConfiguration(.init(pointSize: 12, weight: .medium)) ?? image
+    }
+
+    private static func fileSize(_ url: URL) -> Int64? {
+        (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
+    }
+
     /// Save keeps the window open (Q31). The take is secured *before*
     /// anything can yield — a closing window or a newer take may release it
     /// before the off-main copy runs (review round 1).
     private func saveTake() {
+        guard encode == nil else {
+            NSSound.beep() // one export at a time
+            return
+        }
+        exportFailure = nil
+        switch RecordingExportSource.forSave(scale: exportScale, encoded: exportCache.file(at: exportScale)) {
+        case .take: save(take, scale: .full)
+        case .encoded(let file): save(file, scale: exportScale)
+        case .needsEncode, .saved: startEncode(for: .save, scale: exportScale)
+        }
+    }
+
+    /// Saves `file` — the take at 100 %, else its re-encode at `scale` — as
+    /// a new `Recording … .mp4` and records it for the take at that stop.
+    private func save(_ file: URL, scale: ExportScale) {
         let directory = settings.saveDirectory
         let folderName = saveFolderName
         let date = RecordingExport.recordedDate(of: take)
         let staged: URL
         do {
-            staged = try RecordingExport.stage(take)
+            staged = try RecordingExport.stage(file)
         } catch {
             showAlert(UserFacingText.recordingSaveFailed(error, folderName: folderName))
             return
@@ -357,7 +534,8 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
             }.value
             switch result {
             case .success(let saved):
-                savedFiles.record(saved, for: take)
+                savedFiles.record(saved, for: take, scale: scale)
+                self?.refreshStatus()
             case .failure(let error):
                 if let self {
                     self.showAlert(UserFacingText.recordingSaveFailed(error, folderName: folderName))
@@ -374,9 +552,23 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
     /// be made, the window stays open (its take may be deleted on close, so
     /// the take itself is never put on the pasteboard).
     private func copyTake() {
+        guard encode == nil else {
+            NSSound.beep() // one export at a time
+            return
+        }
+        exportFailure = nil
+        let source = copySource
+        guard source != .needsEncode else {
+            startEncode(for: .copy, scale: exportScale)
+            return
+        }
+        copy(source)
+    }
+
+    private func copy(_ source: RecordingExportSource) {
         let file: URL
         do {
-            file = try fileToCopy()
+            file = try fileToCopy(source)
         } catch {
             showAlert(UserFacingText.recordingCopyFailed(error))
             return
@@ -385,14 +577,136 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
         close()
     }
 
-    /// The saved file when this take was saved (by any of its windows), else
-    /// a fresh clone. Internal (not private) only for tests.
-    func fileToCopy() throws -> URL {
-        if let savedFile = savedFiles.savedFile(for: take) { return savedFile }
-        return try RecordingExport.clipboardFile(
-            for: take, in: RecordingExport.clipboardDirectory, date: RecordingExport.recordedDate(of: take)
+    /// What Copy pastes at the current stop: a file saved at this stop (by
+    /// any of the take's windows), else the take or its re-encode.
+    private var copySource: RecordingExportSource {
+        RecordingExportSource.forCopy(
+            scale: exportScale, saved: savedFiles.savedFile(for: take, scale: exportScale),
+            encoded: exportCache.file(at: exportScale)
         )
     }
+
+    /// The saved file as is, else a fresh `Recording … .mp4` clone of the
+    /// take or its re-encode. Internal (not private) only for tests.
+    func fileToCopy(_ source: RecordingExportSource? = nil) throws -> URL {
+        let date = RecordingExport.recordedDate(of: take)
+        switch source ?? copySource {
+        case .saved(let file):
+            return file
+        case .take:
+            return try RecordingExport.clipboardFile(for: take, in: RecordingExport.clipboardDirectory, date: date)
+        case .encoded(let file):
+            return try RecordingExport.clipboardFile(for: file, in: RecordingExport.clipboardDirectory, date: date)
+        case .needsEncode:
+            throw CocoaError(.fileReadNoSuchFile)
+        }
+    }
+
+    // MARK: Re-encoding
+
+    /// Re-encodes the take at `scale` for a Save or Copy, off the main actor;
+    /// the pressed button shows the progress. The window stays usable: the
+    /// slider may move meanwhile — the export keeps the stop it was pressed
+    /// at — and Q / Esc / ⌘W cancel it.
+    private func startEncode(for action: RecordingWindowAction, scale: ExportScale) {
+        let output: URL
+        do {
+            output = try exportCache.prepare(scale)
+        } catch {
+            showExportFailure(scale)
+            return
+        }
+        let id = UUID()
+        let quality = settings.recordingQuality
+        let report = { @MainActor [weak self] (fraction: Double) in self?.encodeProgressed(id, fraction) }
+        let job = Task.detached(priority: .userInitiated) { [take] in
+            try await RecordingTranscoder.encode(take, to: output, scale: scale, quality: quality) { fraction in
+                Task { await report(fraction) }
+            }
+        }
+        encode = ExportEncode(id: id, action: action, scale: scale, job: job)
+        exportFailure = nil
+        refreshStatus()
+        showEncodeProgress(0, on: action)
+        Task { [weak self] in
+            let result = await job.result
+            if let self {
+                self.encodeFinished(id, result)
+            } else if case .success(let file) = result {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+    }
+
+    private func encodeProgressed(_ id: UUID, _ fraction: Double) {
+        guard let encode, encode.id == id else { return }
+        showEncodeProgress(fraction, on: encode.action)
+    }
+
+    private func encodeFinished(_ id: UUID, _ result: Result<URL, any Error>) {
+        guard let encode, encode.id == id, isOpen else {
+            // Cancelled (or the window closed) while it finished: discard.
+            if case .success(let file) = result { try? FileManager.default.removeItem(at: file) }
+            return
+        }
+        self.encode = nil
+        restoreButton(encode.action)
+        switch result {
+        case .success(let file):
+            exportCache.store(file, scale: encode.scale)
+            refreshStatus()
+            if encode.action == .save {
+                save(file, scale: encode.scale)
+            } else {
+                copy(.encoded(file))
+            }
+        case .failure(let error):
+            if error is CancellationError { return }
+            showExportFailure(encode.scale)
+        }
+    }
+
+    /// Esc / Q / ⌘W during a re-encode: it stops (its partial file goes),
+    /// nothing is saved or copied, the window stays.
+    private func cancelEncode() {
+        guard let encode else { return }
+        encode.job.cancel()
+        self.encode = nil
+        restoreButton(encode.action)
+        refreshStatus()
+    }
+
+    /// A short inline message in the capsule — nothing was saved or copied.
+    private func showExportFailure(_ scale: ExportScale) {
+        exportFailure = scale
+        refreshStatus()
+        NSSound.beep()
+    }
+
+    private func toolbarItem(for action: RecordingWindowAction) -> NSToolbarItem? {
+        let id: NSToolbarItem.Identifier = action == .save ? .recordingSave : .recordingCopy
+        return toolbar.items.first { $0.itemIdentifier == id }
+    }
+
+    /// The pressed button becomes a progress ring; its label (VoiceOver)
+    /// reads the percentage.
+    private func showEncodeProgress(_ fraction: Double, on action: RecordingWindowAction) {
+        guard let item = toolbarItem(for: action) else { return }
+        item.image = Self.progressImage(fraction)
+        item.label = "Exporting \(ExportSizeText.progress(fraction))"
+        item.toolTip = ExportSizeText.cancelToolTip
+    }
+
+    private func restoreButton(_ action: RecordingWindowAction) {
+        guard let item = toolbarItem(for: action) else { return }
+        item.image = Self.symbolImage(for: action)
+        item.label = action.title
+        item.toolTip = action.toolTip(saveFolderName: saveFolderName)
+    }
+
+    // Test hooks: whether a re-encode runs, and the stop's cached re-encode.
+    var isEncoding: Bool { encode != nil }
+    func encodedFile(at scale: ExportScale) -> URL? { exportCache.file(at: scale) }
 
     /// A sheet on this window while it is open, so other windows stay usable
     /// (as in the editor); app-modal once it has closed.
@@ -425,10 +739,13 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
         let seconds = (try? await asset.load(.duration)).map(CMTimeGetSeconds)
         let duration = seconds.flatMap { $0.isFinite ? $0 : nil }
         guard let track = try? await asset.loadTracks(withMediaType: .video).first,
-              let (size, transform) = try? await track.load(.naturalSize, .preferredTransform)
+              let (size, transform, rate) = try? await track.load(.naturalSize, .preferredTransform, .nominalFrameRate)
         else { return RecordingVideoInfo(size: nil, duration: duration) }
         let display = size.applying(transform)
-        return RecordingVideoInfo(size: CGSize(width: abs(display.width), height: abs(display.height)), duration: duration)
+        return RecordingVideoInfo(
+            size: CGSize(width: abs(display.width), height: abs(display.height)), duration: duration,
+            framesPerSecond: rate > 0 ? Double(rate) : nil
+        )
     }
 
     /// The screen showing most of the recorded area, else the main screen.
@@ -461,10 +778,20 @@ extension RecordingWindowController: NSWindowDelegate {
     }
 }
 
-/// The take's video size (pixels) and duration, read after the window opened.
+/// The take's video size (pixels), duration and nominal frame rate, read
+/// after the window opened.
 struct RecordingVideoInfo: Equatable, Sendable {
     var size: CGSize?
     var duration: TimeInterval?
+    var framesPerSecond: Double?
+}
+
+/// A re-encode running for a Save or Copy (`startEncode`).
+private struct ExportEncode {
+    let id: UUID
+    let action: RecordingWindowAction
+    let scale: ExportScale
+    let job: Task<URL, any Error>
 }
 
 /// How a recording window asks for activation — the app in production, a
@@ -531,8 +858,7 @@ extension RecordingWindowController: NSToolbarDelegate {
         _ id: NSToolbarItem.Identifier, for action: RecordingWindowAction, action selector: Selector
     ) -> NSToolbarItem {
         let item = NSToolbarItem(itemIdentifier: id)
-        let image = NSImage(systemSymbolName: action.symbolName, accessibilityDescription: action.title) ?? NSImage()
-        item.image = image.withSymbolConfiguration(.init(pointSize: 12, weight: .medium)) ?? image
+        item.image = Self.symbolImage(for: action)
         item.label = action.title
         item.toolTip = action.toolTip(saveFolderName: saveFolderName)
         item.target = self
@@ -642,12 +968,6 @@ private final class RecordingCanvasView: NSView {
         }
         shadowHost.layer?.shadowColor = color
     }
-}
-
-/// The status capsule shows text only — clicks pass through.
-@MainActor
-private final class RecordingStatusGlassView: NSGlassEffectView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 /// The recording window: a normal titled window (resizable, minimisable, in

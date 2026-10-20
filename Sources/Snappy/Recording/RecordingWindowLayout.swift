@@ -16,9 +16,13 @@ enum RecordingWindowLayout {
     /// Space around the player inside the unobscured content area.
     static let margin: CGFloat = 16
 
+    /// The status capsule's height: room for the export-size slider's 28 pt
+    /// hit target.
+    static let statusCapsuleHeight: CGFloat = 36
+
     /// Kept below the player for the status capsule (capsule height plus its
-    /// gaps), as in the editor.
-    static let statusBand: CGFloat = 44
+    /// gaps, as in the editor).
+    static let statusBand: CGFloat = statusCapsuleHeight + 16
 
     /// The `.unified` toolbar's height. Only the *initial* size uses it; the
     /// live layout reads the window's `contentLayoutRect`.
@@ -105,8 +109,8 @@ enum RecordingWindowLayout {
     }
 }
 
-/// PURE window title and status-capsule text — tested. Mirrors the editor's
-/// "Shot W × H" / "Shot W × H · 100%".
+/// PURE window title — tested. Mirrors the editor's "Shot W × H". The status
+/// capsule's readouts are `ExportSizeText`'s.
 enum RecordingWindowStatus {
     /// "Recording 1280 × 720": the video's pixel size — the file's real size,
     /// what a player or Slack reports (a recording has no point scale of its
@@ -115,12 +119,5 @@ enum RecordingWindowStatus {
     static func title(videoSize: CGSize?) -> String {
         guard let videoSize, videoSize.width > 0, videoSize.height > 0 else { return "Recording" }
         return "Recording \(Int(videoSize.width.rounded())) × \(Int(videoSize.height.rounded()))"
-    }
-
-    /// "Recording 1280 × 720 · 0:42" — the duration rounded to the nearest
-    /// second in the menu bar's compact form; left out when unknown.
-    static func text(title: String, duration: TimeInterval?) -> String {
-        guard let duration, duration.isFinite, duration >= 0 else { return title }
-        return "\(title) · \(RecordingTimerText.compact(elapsed: duration.rounded()))"
     }
 }

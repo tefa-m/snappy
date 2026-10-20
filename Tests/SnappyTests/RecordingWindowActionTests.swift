@@ -51,6 +51,20 @@ struct RecordingWindowActionTests {
         #expect(action(12, "q") == .close)
     }
 
+    @Test("[ and ] step the export size; with ⌘ they do nothing")
+    func exportSizeKeys() {
+        #expect(action(33, "[") == .smallerExport)
+        #expect(action(30, "]") == .largerExport)
+        #expect(action(33, "[", .capsLock) == .smallerExport)
+        #expect(action(33, "[", .command) == nil)
+        #expect(action(30, "]", [.command, .option]) == nil)
+        #expect(RecordingWindowAction.smallerExport.toolTip(saveFolderName: "Desktop") == "Smaller export ([)")
+        #expect(RecordingWindowAction.largerExport.toolTip(saveFolderName: "Desktop") == "Larger export (])")
+        // Not toolbar buttons: the status capsule's slider is their control.
+        #expect(!RecordingWindowAction.buttons.contains(.smallerExport))
+        #expect(!RecordingWindowAction.buttons.contains(.largerExport))
+    }
+
     @Test("⌘S saves, ⇧⌘C (and ⌘C) copies, ⌘W closes")
     func commandKeys() {
         #expect(action(1, "s", .command) == .save)
