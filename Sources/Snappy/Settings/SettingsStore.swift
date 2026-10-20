@@ -61,7 +61,8 @@ final class SettingsStore {
         set { defaults.set(newValue, forKey: Key.hasCompletedFirstCapture) }
     }
 
-    /// Global capture shortcut (⇧⌘4 by default; UI to change it comes later).
+    /// Global capture shortcut (⇧⌘4 by default; Settings → Shortcuts changes
+    /// it through `GlobalHotKeys`, which persists only a combo it could register).
     var captureHotKey: HotKeyCombo {
         get {
             if let dict = defaults.dictionary(forKey: Key.captureHotKey) as? [String: Int],
@@ -84,6 +85,25 @@ final class SettingsStore {
             return .defaultFullscreen
         }
         set { defaults.set(newValue.userDefaultsRepresentation, forKey: Key.fullscreenHotKey) }
+    }
+
+    /// All four remappable hot keys at once (`SnappyHotKey`), each through
+    /// its own key above.
+    var hotKeyBindings: HotKeyBindings {
+        get {
+            HotKeyBindings(
+                captureArea: captureHotKey,
+                captureFullscreen: fullscreenHotKey,
+                drawMode: recordingDrawModeHotKey,
+                magicPen: recordingMagicPenHotKey
+            )
+        }
+        set {
+            if newValue.captureArea != captureHotKey { captureHotKey = newValue.captureArea }
+            if newValue.captureFullscreen != fullscreenHotKey { fullscreenHotKey = newValue.captureFullscreen }
+            if newValue.drawMode != recordingDrawModeHotKey { recordingDrawModeHotKey = newValue.drawMode }
+            if newValue.magicPen != recordingMagicPenHotKey { recordingMagicPenHotKey = newValue.magicPen }
+        }
     }
 
     /// Tool-aware editor cursor (crosshair + tool badge, hover cursors, tool
@@ -224,7 +244,8 @@ final class SettingsStore {
     }
 
     /// Session-only draw/interact hot key. Default ⌃⌥D. Read at each session
-    /// start, so a change applies from the next session.
+    /// start; a Settings change during a session is rebound live
+    /// (`RecordingCoordinator.rebindSessionHotKey`).
     var recordingDrawModeHotKey: HotKeyCombo {
         get {
             if let dict = defaults.dictionary(forKey: Key.recordingDrawModeHotKey) as? [String: Int],
@@ -237,7 +258,7 @@ final class SettingsStore {
     }
 
     /// Session-only Magic Pen hot key. Default ⌃⌥P. Read at each session
-    /// start, like the draw-mode hot key.
+    /// start and rebound live, like the draw-mode hot key.
     var recordingMagicPenHotKey: HotKeyCombo {
         get {
             if let dict = defaults.dictionary(forKey: Key.recordingMagicPenHotKey) as? [String: Int],

@@ -93,14 +93,18 @@ struct SettingsFormattingTests {
         #expect(HotKeyCombo.modifierSymbols(0) == "")
     }
 
-    private static let snappyKeys = ReservedHotKey.snappyGlobal(
-        capture: .defaultCapture, fullscreen: .defaultFullscreen
-    )
+    private static let snappyKeys = [
+        ReservedHotKey(combo: .defaultCapture, name: "Capture Area"),
+        ReservedHotKey(combo: .defaultFullscreen, name: "Capture Entire Screen"),
+    ]
 
     private static func outcome(
-        _ keyCode: Int, _ flags: NSEvent.ModifierFlags, reserved: [ReservedHotKey] = snappyKeys
+        _ keyCode: Int,
+        _ flags: NSEvent.ModifierFlags,
+        rule: HotKeyModifierRule = .controlOrOption,
+        reserved: [ReservedHotKey] = snappyKeys
     ) -> HotKeyRecorderInput.Outcome {
-        HotKeyRecorderInput.outcome(keyCode: UInt16(keyCode), flags: flags, reserved: reserved)
+        HotKeyRecorderInput.outcome(keyCode: UInt16(keyCode), flags: flags, rule: rule, reserved: reserved)
     }
 
     @Test("Recorder accepts a letter or digit with ⌃ or ⌥ — ⇧ and ⌘ only on top")
@@ -123,10 +127,10 @@ struct SettingsFormattingTests {
 
     @Test("Recorder rejects bare and ⇧-only keys, unnamed keys, and Snappy's own hot keys")
     func recorderRejects() {
-        #expect(Self.outcome(kVK_ANSI_D, []) == .reject(.needsModifier))
-        #expect(Self.outcome(kVK_ANSI_D, .shift) == .reject(.needsModifier))
-        #expect(Self.outcome(kVK_ANSI_D, .capsLock) == .reject(.needsModifier))
-        #expect(Self.outcome(kVK_Space, []) == .reject(.needsModifier))
+        #expect(Self.outcome(kVK_ANSI_D, []) == .reject(.needsModifier(.controlOrOption)))
+        #expect(Self.outcome(kVK_ANSI_D, .shift) == .reject(.needsModifier(.controlOrOption)))
+        #expect(Self.outcome(kVK_ANSI_D, .capsLock) == .reject(.needsModifier(.controlOrOption)))
+        #expect(Self.outcome(kVK_Space, []) == .reject(.needsModifier(.controlOrOption)))
         #expect(Self.outcome(kVK_F5, .option) == .reject(.unsupportedKey))
         #expect(Self.outcome(kVK_LeftArrow, [.control, .function]) == .reject(.unsupportedKey))
         #expect(Self.outcome(kVK_ANSI_Slash, .option) == .reject(.unsupportedKey))
@@ -154,10 +158,13 @@ struct SettingsFormattingTests {
     @Test("Reserved hot keys follow the configured capture shortcuts")
     func recorderReservedFollowsSettings() {
         let custom = HotKeyCombo(keyCode: UInt32(kVK_ANSI_X), carbonModifiers: UInt32(controlKey | optionKey))
-        let reserved = ReservedHotKey.snappyGlobal(capture: custom, fullscreen: .defaultFullscreen)
+        var bindings = HotKeyBindings.defaults
+        bindings.captureArea = custom
+        let reserved = SnappyHotKey.drawMode.reserved(in: bindings)
         #expect(Self.outcome(kVK_ANSI_X, [.control, .option], reserved: reserved) == .reject(.reserved(reserved[0])))
         let fullscreen = HotKeyCombo(keyCode: UInt32(kVK_ANSI_3), carbonModifiers: UInt32(controlKey | shiftKey))
-        let both = ReservedHotKey.snappyGlobal(capture: custom, fullscreen: fullscreen)
+        bindings.captureFullscreen = fullscreen
+        let both = SnappyHotKey.drawMode.reserved(in: bindings)
         #expect(Self.outcome(kVK_ANSI_3, [.control, .shift], reserved: both) == .reject(.reserved(both[1])))
         #expect(Self.outcome(kVK_ANSI_3, [.control, .shift], reserved: reserved)
             == .accept(fullscreen))
@@ -166,12 +173,8 @@ struct SettingsFormattingTests {
     @Test("Each recording recorder refuses Snappy's global hot keys and the other recording hot key")
     func recordingHotKeysReserveEachOther() {
         let draw = HotKeyCombo.defaultDrawMode, magic = HotKeyCombo.defaultMagicPen
-        let forDraw = RecordingHotKey.drawMode.reserved(
-            capture: .defaultCapture, fullscreen: .defaultFullscreen, drawMode: draw, magicPen: magic
-        )
-        let forMagic = RecordingHotKey.magicPen.reserved(
-            capture: .defaultCapture, fullscreen: .defaultFullscreen, drawMode: draw, magicPen: magic
-        )
+        let forDraw = SnappyHotKey.drawMode.reserved(in: .defaults)
+        let forMagic = SnappyHotKey.magicPen.reserved(in: .defaults)
         #expect(forDraw == Self.snappyKeys + [ReservedHotKey(combo: magic, name: "Magic Pen")])
         #expect(forMagic == Self.snappyKeys + [ReservedHotKey(combo: draw, name: "Draw Mode")])
         #expect(Self.outcome(kVK_ANSI_P, [.control, .option], reserved: forDraw) == .reject(.reserved(forDraw[2])))
@@ -183,15 +186,85 @@ struct SettingsFormattingTests {
         #expect(Self.outcome(kVK_ANSI_P, .command, reserved: forMagic) == .reject(.commandOnly))
     }
 
-    @Test("Recording recorders: names, defaults and HIG tooltips")
-    func recordingHotKeyNames() {
-        #expect(RecordingHotKey.allCases.map(\.name) == ["Draw Mode", "Magic Pen"])
-        #expect(RecordingHotKey.drawMode.defaultCombo == .defaultDrawMode)
-        #expect(RecordingHotKey.magicPen.defaultCombo == .defaultMagicPen)
-        #expect(RecordingHotKey.magicPen.recorderToolTip == "Record a new Magic Pen shortcut (Space)")
-        #expect(RecordingHotKey.magicPen.resetToolTip == "Reset the Magic Pen shortcut to ⌃⌥P (Space)")
-        #expect(RecordingHotKey.drawMode.resetToolTip == "Reset the Draw Mode shortcut to ⌃⌥D (Space)")
-        #expect(RecordingHotKey.drawMode.recorderAccessibilityLabel == "Draw Mode shortcut")
+    @Test("Shortcut recorders: names, defaults, actions, rules and HIG tooltips")
+    func snappyHotKeyNames() {
+        #expect(SnappyHotKey.allCases.map(\.name) == ["Capture Area", "Capture Entire Screen", "Draw Mode", "Magic Pen"])
+        #expect(SnappyHotKey.allCases.map(\.defaultCombo)
+            == [.defaultCapture, .defaultFullscreen, .defaultDrawMode, .defaultMagicPen])
+        #expect(SnappyHotKey.allCases.map(\.action)
+            == [.captureArea, .captureFullscreen, .toggleDrawMode, .toggleMagicPen])
+        #expect(SnappyHotKey.allCases.filter(\.isSessionOnly) == [.drawMode, .magicPen])
+        #expect(SnappyHotKey.captureArea.modifierRule == .commandControlOrOption)
+        #expect(SnappyHotKey.captureFullscreen.modifierRule == .commandControlOrOption)
+        #expect(SnappyHotKey.drawMode.modifierRule == .controlOrOption)
+        #expect(SnappyHotKey.magicPen.modifierRule == .controlOrOption)
+        #expect(SnappyHotKey.magicPen.recorderToolTip == "Record a new Magic Pen shortcut (Space)")
+        #expect(SnappyHotKey.magicPen.resetToolTip == "Reset the Magic Pen shortcut to ⌃⌥P (Space)")
+        #expect(SnappyHotKey.drawMode.resetToolTip == "Reset the Draw Mode shortcut to ⌃⌥D (Space)")
+        #expect(SnappyHotKey.captureArea.resetToolTip == "Reset the Capture Area shortcut to ⇧⌘4 (Space)")
+        #expect(SnappyHotKey.drawMode.recorderAccessibilityLabel == "Draw Mode shortcut")
+        #expect(SnappyHotKey.captureFullscreen.recorderAccessibilityLabel == "Capture Entire Screen shortcut")
+    }
+
+    @Test("Capture recorders take ⌘, ⌃ or ⌥ (⇧ only on top) and refuse the other Snappy hot keys")
+    func captureRecorderRule() {
+        let rule = HotKeyModifierRule.commandControlOrOption
+        let five = UInt32(kVK_ANSI_5)
+        #expect(Self.outcome(kVK_ANSI_5, [.shift, .command], rule: rule, reserved: [])
+            == .accept(HotKeyCombo(keyCode: five, carbonModifiers: UInt32(shiftKey | cmdKey))))
+        #expect(Self.outcome(kVK_ANSI_5, .command, rule: rule, reserved: [])
+            == .accept(HotKeyCombo(keyCode: five, carbonModifiers: UInt32(cmdKey))))
+        #expect(Self.outcome(kVK_ANSI_5, .option, rule: rule, reserved: [])
+            == .accept(HotKeyCombo(keyCode: five, carbonModifiers: UInt32(optionKey))))
+        #expect(Self.outcome(kVK_ANSI_5, .control, rule: rule, reserved: [])
+            == .accept(HotKeyCombo(keyCode: five, carbonModifiers: UInt32(controlKey))))
+        #expect(Self.outcome(kVK_ANSI_5, [], rule: rule) == .reject(.needsModifier(rule)))
+        #expect(Self.outcome(kVK_ANSI_5, .shift, rule: rule) == .reject(.needsModifier(rule)))
+        #expect(Self.outcome(kVK_F5, .command, rule: rule) == .reject(.unsupportedKey))
+        #expect(Self.outcome(kVK_Escape, .command, rule: rule) == .cancel)
+        // Capture Entire Screen may not take Capture Area's ⇧⌘4, nor Draw Mode's ⌃⌥D.
+        let forScreen = SnappyHotKey.captureFullscreen.reserved(in: .defaults)
+        #expect(forScreen.map(\.name) == ["Capture Area", "Draw Mode", "Magic Pen"])
+        #expect(Self.outcome(kVK_ANSI_4, [.shift, .command], rule: rule, reserved: forScreen)
+            == .reject(.reserved(forScreen[0])))
+        #expect(Self.outcome(kVK_ANSI_D, [.control, .option], rule: rule, reserved: forScreen)
+            == .reject(.reserved(forScreen[1])))
+        // Its own current combo is no clash.
+        #expect(Self.outcome(kVK_ANSI_3, [.shift, .command], rule: rule, reserved: forScreen)
+            == .accept(.defaultFullscreen))
+    }
+
+    @Test("Bindings: subscript per hot key, clashes with another hot key, reset refused when taken")
+    func hotKeyBindings() {
+        var bindings = HotKeyBindings.defaults
+        for hotKey in SnappyHotKey.allCases { #expect(bindings[hotKey] == hotKey.defaultCombo) }
+        let x = HotKeyCombo(keyCode: UInt32(kVK_ANSI_X), carbonModifiers: UInt32(controlKey | optionKey))
+        bindings[.magicPen] = x
+        #expect(bindings.magicPen == x)
+        #expect(bindings[.drawMode] == .defaultDrawMode)
+        #expect(bindings.conflict(for: .magicPen, combo: x) == nil, "its own combo")
+        #expect(bindings.conflict(for: .captureArea, combo: x)
+            == .reserved(ReservedHotKey(combo: x, name: "Magic Pen")))
+        #expect(bindings.conflict(for: .captureArea, combo: .defaultFullscreen)
+            == .reserved(ReservedHotKey(combo: .defaultFullscreen, name: "Capture Entire Screen")))
+        #expect(bindings.conflict(for: .captureArea, combo: .defaultMagicPen) == nil, "⌃⌥P is free now")
+        // Draw Mode takes ⌃⌥P: Magic Pen's Reset is refused, naming Draw Mode.
+        bindings[.drawMode] = .defaultMagicPen
+        #expect(bindings.resetRejection(for: .magicPen)
+            == .reserved(ReservedHotKey(combo: .defaultMagicPen, name: "Draw Mode")))
+        #expect(bindings.resetRejection(for: .drawMode) == nil)
+        #expect(HotKeyBindings.defaults.resetRejection(for: .captureArea) == nil)
+    }
+
+    @Test("Menu key equivalent: lowercased key and the combo's modifiers; none for an unnamed key")
+    func menuKeyEquivalent() {
+        #expect(HotKeyCombo.defaultCapture.menuKeyEquivalent.key == "4")
+        #expect(HotKeyCombo.defaultCapture.menuKeyEquivalent.modifiers == [.command, .shift])
+        #expect(HotKeyCombo.defaultDrawMode.menuKeyEquivalent.key == "d")
+        #expect(HotKeyCombo.defaultDrawMode.menuKeyEquivalent.modifiers == [.control, .option])
+        let f5 = HotKeyCombo(keyCode: UInt32(kVK_F5), carbonModifiers: UInt32(cmdKey))
+        #expect(f5.menuKeyEquivalent.key == "")
+        #expect(f5.menuKeyEquivalent.modifiers == [])
     }
 
     @Test("Esc cancels with any modifiers; Tab and ⇧Tab leave; ⌃Tab is just an unnamed key")
@@ -205,7 +278,12 @@ struct SettingsFormattingTests {
 
     @Test("Rejection messages name the fix, and the taken shortcut by its menu name")
     func recorderMessages() {
-        #expect(HotKeyRecorderInput.Rejection.needsModifier.message == "Include ⌃ or ⌥ in the shortcut.")
+        #expect(HotKeyRecorderInput.Rejection.needsModifier(.controlOrOption).message
+            == "Include ⌃ or ⌥ in the shortcut.")
+        #expect(HotKeyRecorderInput.Rejection.needsModifier(.commandControlOrOption).message
+            == "Include ⌘, ⌃ or ⌥ in the shortcut.")
+        #expect(HotKeyRecorderInput.Rejection.unavailable(.defaultCapture).message
+            == "⇧⌘4 is already taken by macOS or another app — choose another shortcut.")
         #expect(HotKeyRecorderInput.Rejection.commandOnly.message
             == "Include ⌃ or ⌥ — ⌘ shortcuts belong to your apps.")
         #expect(HotKeyRecorderInput.Rejection.unsupportedKey.message == "Use a letter or number key.")

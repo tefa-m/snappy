@@ -1,9 +1,9 @@
 import AppKit
 
-/// Single-pane settings window ("Snappy Settings"): save folder, the global
-/// shortcuts and how to free them from macOS, the editor options and the
-/// Recording section (`RecordingSettingsSection`).
-/// (Recording the global shortcuts comes in a later milestone.)
+/// Single-pane settings window ("Snappy Settings"): save folder, the capture
+/// shortcuts (click-to-record fields, `HotKeyField`) and how to free them
+/// from macOS, the editor options and the Recording section
+/// (`RecordingSettingsSection`, with the Draw Mode / Magic Pen fields).
 @MainActor
 final class SettingsWindowController: NSObject {
     private let settings: SettingsStore
@@ -19,6 +19,8 @@ final class SettingsWindowController: NSObject {
     private let paddingField = NSTextField(string: "")
     private let paddingStepper = NSStepper()
     private let recording: RecordingSettingsSection
+    private let captureAreaField: HotKeyField
+    private let fullscreenField: HotKeyField
     private let grid = NSGridView()
     /// Holds the pane; scrolls only when the pane is taller than the screen
     /// allows (`SettingsPaneFit`).
@@ -31,11 +33,28 @@ final class SettingsWindowController: NSObject {
     /// sheet deeper (Keyboard Shortcuts…), which no URL reaches.
     private static let keyboardSettingsURL = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")
 
+    private static let shortcutHintText =
+        "For these to work, turn off the macOS screenshot shortcuts in Keyboard Shortcuts… › Screenshots."
+
     /// `setMagicPenWidth` is `RecordingCoordinator.setMagicPenWidth` — the
     /// thickness applies live during a session, like the menu bar's.
-    init(settings: SettingsStore = .shared, setMagicPenWidth: @escaping @MainActor (InkWidth) -> Void) {
+    /// `hotKeys` binds a recorded shortcut at once (nil: only saved).
+    init(
+        settings: SettingsStore = .shared,
+        hotKeys: GlobalHotKeys? = nil,
+        setMagicPenWidth: @escaping @MainActor (InkWidth) -> Void
+    ) {
         self.settings = settings
-        recording = RecordingSettingsSection(settings: settings, setMagicPenWidth: setMagicPenWidth)
+        let hotKeys = hotKeys ?? GlobalHotKeys(settings: settings, center: nil)
+        recording = RecordingSettingsSection(settings: settings, hotKeys: hotKeys, setMagicPenWidth: setMagicPenWidth)
+        // One hint for both capture fields; a refusal replaces it.
+        let shortcutHint = Self.hintLabel(Self.shortcutHintText)
+        captureAreaField = HotKeyField(
+            .captureArea, hotKeys: hotKeys, hint: shortcutHint, hintText: Self.shortcutHintText
+        )
+        fullscreenField = HotKeyField(
+            .captureFullscreen, hotKeys: hotKeys, hint: shortcutHint, hintText: Self.shortcutHintText
+        )
         window = SettingsWindow(
             contentRect: NSRect(x: 0, y: 0, width: 460, height: 300),
             styleMask: [.titled, .closable], // minimize/zoom dimmed (HIG Settings)
@@ -56,16 +75,6 @@ final class SettingsWindowController: NSObject {
         folderControl.action = #selector(folderChanged)
         folderControl.setAccessibilityLabel("Save screenshots to")
 
-        let areaShortcut = NSTextField(
-            labelWithString: "\(settings.captureHotKey.displayString)  Capture Area"
-        )
-        let screenShortcut = NSTextField(
-            labelWithString: "\(settings.fullscreenHotKey.displayString)  Capture Entire Screen"
-        )
-        let shortcutHint = Self.hintLabel(
-            "For these to work, turn off the macOS screenshot shortcuts in "
-                + "Keyboard Shortcuts… › Screenshots."
-        )
         let keyboardButton = NSButton(
             title: "Open Keyboard Settings",
             target: self,
@@ -110,8 +119,8 @@ final class SettingsWindowController: NSObject {
         let empty = NSGridCell.emptyContentView
         for row in [
             [NSTextField(labelWithString: "Save screenshots to:"), folderControl],
-            [NSTextField(labelWithString: "Shortcuts:"), areaShortcut],
-            [empty, screenShortcut],
+            [NSTextField(labelWithString: "Capture area:"), captureAreaField.row],
+            [NSTextField(labelWithString: "Capture screen:"), fullscreenField.row],
             [empty, shortcutHint],
             [empty, keyboardButton],
             [NSTextField(labelWithString: "Editor:"), cursorCheckbox],
@@ -127,6 +136,9 @@ final class SettingsWindowController: NSObject {
         // Groups: folder | shortcuts (+ hint, button) | editor | padding (+ hint).
         for row in [1, 5, 6] { grid.row(at: row).topPadding = 10 }
         recording.append(to: grid)
+        for field in [captureAreaField, fullscreenField] {
+            field.onHeightChange = { [weak self] in self?.fitToScreen() }
+        }
         recording.onHeightChange = { [weak self] in self?.fitToScreen() }
         grid.translatesAutoresizingMaskIntoConstraints = false
 
@@ -229,6 +241,8 @@ final class SettingsWindowController: NSObject {
         folderControl.url = settings.saveDirectory
         cursorCheckbox.state = settings.toolAwareCursorEnabled ? .on : .off
         showPadding(Int(settings.canvasPadding.rounded()))
+        captureAreaField.sync()
+        fullscreenField.sync()
         recording.syncFromSettings()
     }
 
@@ -303,7 +317,7 @@ extension SettingsWindowController: NSPathControlDelegate {
 }
 
 /// Handles ⌘W and the text-editing shortcuts itself — see `SettingsKeyCommand`.
-/// While the draw-mode recorder is recording, every key equivalent (⌘W too)
+/// While a shortcut recorder is recording, every key equivalent (⌘W too)
 /// goes to it instead: it is the shortcut being typed.
 private final class SettingsWindow: NSWindow {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -338,7 +352,8 @@ private final class SettingsWindow: NSWindow {
 
 /// Settings → Recording (`features/recording.md` › Settings → Recording): one
 /// control per row of that table, each written straight to `SettingsStore`.
-/// A session reads them all at its start, so nothing is observed live.
+/// A session reads them all at its start — except the Magic Pen thickness and
+/// the two hot keys, which a running session picks up live.
 ///
 /// Self-contained on purpose — its rows go into the pane's grid after a
 /// separator and a heading, and could fill a Recording tab's grid instead
@@ -360,14 +375,10 @@ final class RecordingSettingsSection: NSObject {
     )
     private let fadeDelayLabel = NSTextField(labelWithString: "")
     private let fadeDelayStepper = NSStepper()
-    private let hotKeyRecorder = HotKeyRecorderButton(kind: .drawMode)
-    private let hotKeyResetButton = NSButton(title: "Reset", target: nil, action: nil)
-    private let hotKeyHint = SettingsWindowController.hintLabel(RecordingSettingsSection.hotKeyHintText)
-    // Magic Pen: its own shortcut recorder and thickness (also in the menu bar).
-    private let magicPenRecorder = HotKeyRecorderButton(kind: .magicPen)
-    private let magicPenResetButton = NSButton(title: "Reset", target: nil, action: nil)
+    private let drawModeField: HotKeyField
+    // Magic Pen: its own shortcut field and thickness (also in the menu bar).
+    private let magicPenField: HotKeyField
     let magicPenWidthPopUp = NSPopUpButton() // internal for tests
-    private let magicPenHint = SettingsWindowController.hintLabel(RecordingSettingsSection.magicPenHintText)
     // Window parts (Q39): Accessibility status + a way to grant it.
     private let partsStatusImage = NSImageView()
     private let partsStatusLabel = NSTextField(labelWithString: "")
@@ -375,8 +386,10 @@ final class RecordingSettingsSection: NSObject {
     private let partsHint = SettingsWindowController.hintLabel("")
     private var partsStatus: WindowPartPermission.Status?
 
-    /// The hint under the recorder changed its line count — the window refits.
-    var onHeightChange: (() -> Void)?
+    /// A hint under a recorder changed its line count — the window refits.
+    var onHeightChange: (() -> Void)? {
+        didSet { for field in [drawModeField, magicPenField] { field.onHeightChange = onHeightChange } }
+    }
 
     private static let hotKeyHintText =
         "Switches between drawing and using your app while recording."
@@ -384,9 +397,23 @@ final class RecordingSettingsSection: NSObject {
         "Draws ink that fades on its own while recording. Change the thickness with [ ] while drawing, "
             + "or from the menu bar — while recording, right-click its red ●."
 
-    init(settings: SettingsStore, setMagicPenWidth: @escaping @MainActor (InkWidth) -> Void) {
+    /// `hotKeys` binds a recorded shortcut at once (nil: only saved).
+    init(
+        settings: SettingsStore,
+        hotKeys: GlobalHotKeys? = nil,
+        setMagicPenWidth: @escaping @MainActor (InkWidth) -> Void
+    ) {
         self.settings = settings
         self.setMagicPenWidth = setMagicPenWidth
+        let hotKeys = hotKeys ?? GlobalHotKeys(settings: settings, center: nil)
+        drawModeField = HotKeyField(
+            .drawMode, hotKeys: hotKeys,
+            hint: SettingsWindowController.hintLabel(Self.hotKeyHintText), hintText: Self.hotKeyHintText
+        )
+        magicPenField = HotKeyField(
+            .magicPen, hotKeys: hotKeys,
+            hint: SettingsWindowController.hintLabel(Self.magicPenHintText), hintText: Self.magicPenHintText
+        )
         super.init()
 
         Self.fill(countdownPopUp, RecordingCountdown.allCases, title: RecordingSettingsText.countdown)
@@ -432,24 +459,6 @@ final class RecordingSettingsSection: NSObject {
             greaterThanOrEqualToConstant: Self.textWidth(RecordingSettingsText.seconds(10))
         ).isActive = true
 
-        for recorder in [hotKeyRecorder, magicPenRecorder] {
-            let kind = recorder.kind
-            recorder.reserved = { [settings] in
-                kind.reserved(
-                    capture: settings.captureHotKey, fullscreen: settings.fullscreenHotKey,
-                    drawMode: settings.recordingDrawModeHotKey, magicPen: settings.recordingMagicPenHotKey
-                )
-            }
-            recorder.onRecord = { [weak self] combo in self?.hotKeyRecorded(combo, kind: kind) }
-            recorder.onFeedback = { [weak self] rejection in self?.showHotKeyFeedback(rejection, kind: kind) }
-        }
-        hotKeyResetButton.target = self
-        hotKeyResetButton.action = #selector(resetHotKey)
-        hotKeyResetButton.toolTip = RecordingHotKey.drawMode.resetToolTip
-        magicPenResetButton.target = self
-        magicPenResetButton.action = #selector(resetMagicPenHotKey)
-        magicPenResetButton.toolTip = RecordingHotKey.magicPen.resetToolTip
-
         partsSettingsButton.target = self
         partsSettingsButton.action = #selector(openAccessibilitySettings)
         partsSettingsButton.toolTip = "Open Privacy & Security › Accessibility in System Settings"
@@ -460,8 +469,7 @@ final class RecordingSettingsSection: NSObject {
         // ≥ 28 pt controls (Design decision, see the padding stepper above).
         for control in [
             countdownPopUp, frameRatePopUp, qualityPopUp, cursorCheckbox, clicksCheckbox,
-            colorPopUp, widthPopUp, fadingCheckbox, fadeDelayStepper, hotKeyRecorder, hotKeyResetButton,
-            magicPenRecorder, magicPenResetButton, magicPenWidthPopUp, partsSettingsButton,
+            colorPopUp, widthPopUp, fadingCheckbox, fadeDelayStepper, magicPenWidthPopUp, partsSettingsButton,
         ] as [NSControl] {
             control.controlSize = .large
         }
@@ -475,8 +483,6 @@ final class RecordingSettingsSection: NSObject {
         heading.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
 
         let fadeDelayRow = Self.row([fadeDelayLabel, fadeDelayStepper])
-        let hotKeyRow = Self.row([hotKeyRecorder, hotKeyResetButton])
-        let magicPenRow = Self.row([magicPenRecorder, magicPenResetButton])
         let inkRow = Self.row([colorPopUp, widthPopUp])
         // Word joiners keep "1–5" on one line.
         let inkHint = SettingsWindowController.hintLabel(
@@ -498,12 +504,12 @@ final class RecordingSettingsSection: NSObject {
         grid.addRow(with: [NSTextField(labelWithString: "Fade after:"), fadeDelayRow])
         grid.addRow(with: [empty, inkHint])
         // Draw-mode shortcut
-        grid.addRow(with: [NSTextField(labelWithString: "Draw mode:"), hotKeyRow])
-        grid.addRow(with: [empty, hotKeyHint])
+        grid.addRow(with: [NSTextField(labelWithString: "Draw mode:"), drawModeField.row])
+        grid.addRow(with: [empty, drawModeField.hint])
         // Magic Pen (shortcut + thickness)
-        grid.addRow(with: [NSTextField(labelWithString: "Magic Pen:"), magicPenRow])
+        grid.addRow(with: [NSTextField(labelWithString: "Magic Pen:"), magicPenField.row])
         grid.addRow(with: [NSTextField(labelWithString: "Magic Pen thickness:"), magicPenWidthPopUp])
-        grid.addRow(with: [empty, magicPenHint])
+        grid.addRow(with: [empty, magicPenField.hint])
         // Window parts (Accessibility)
         let partsRow = Self.row([partsStatusImage, partsStatusLabel, partsSettingsButton])
         grid.addRow(with: [NSTextField(labelWithString: "Window parts:"), partsRow])
@@ -535,7 +541,6 @@ final class RecordingSettingsSection: NSObject {
     }
 
     func syncFromSettings() {
-        hotKeyRecorder.cancelRecording()
         Self.select(settings.recordingCountdown, in: countdownPopUp)
         Self.select(settings.recordingFrameRate, in: frameRatePopUp)
         Self.select(settings.recordingQuality, in: qualityPopUp)
@@ -546,11 +551,8 @@ final class RecordingSettingsSection: NSObject {
         clicksCheckbox.state = settings.recordingShowsClicks ? .on : .off
         fadingCheckbox.state = settings.recordingFadingInkAtStart ? .on : .off
         showFadeDelay(settings.recordingFadeDelay)
-        magicPenRecorder.cancelRecording()
-        showHotKey(settings.recordingDrawModeHotKey, kind: .drawMode)
-        showHotKey(settings.recordingMagicPenHotKey, kind: .magicPen)
-        showHotKeyFeedback(nil, kind: .drawMode)
-        showHotKeyFeedback(nil, kind: .magicPen)
+        drawModeField.sync()
+        magicPenField.sync()
         refreshWindowPartsStatus()
     }
 
@@ -579,38 +581,6 @@ final class RecordingSettingsSection: NSObject {
     private func showFadeDelay(_ seconds: Int) {
         fadeDelayStepper.integerValue = seconds
         fadeDelayLabel.stringValue = RecordingSettingsText.seconds(seconds)
-    }
-
-    private func recorder(for kind: RecordingHotKey) -> HotKeyRecorderButton {
-        kind == .drawMode ? hotKeyRecorder : magicPenRecorder
-    }
-
-    private func showHotKey(_ combo: HotKeyCombo, kind: RecordingHotKey) {
-        recorder(for: kind).combo = combo
-        (kind == .drawMode ? hotKeyResetButton : magicPenResetButton).isEnabled = combo != kind.defaultCombo
-    }
-
-    /// The hint under the recorder, or why the last key was refused (also
-    /// spoken, since the field itself doesn't change).
-    private func showHotKeyFeedback(_ rejection: HotKeyRecorderInput.Rejection?, kind: RecordingHotKey) {
-        let hint = kind == .drawMode ? hotKeyHint : magicPenHint
-        let lines = hint.intrinsicContentSize.height
-        defer { if hint.intrinsicContentSize.height != lines { onHeightChange?() } }
-        guard let rejection else {
-            hint.stringValue = kind == .drawMode ? Self.hotKeyHintText : Self.magicPenHintText
-            hint.textColor = .secondaryLabelColor
-            return
-        }
-        hint.stringValue = rejection.message
-        hint.textColor = .labelColor
-        NSAccessibility.post(
-            element: recorder(for: kind),
-            notification: .announcementRequested,
-            userInfo: [
-                .announcement: rejection.message,
-                .priority: NSAccessibilityPriorityLevel.high.rawValue,
-            ]
-        )
     }
 
     // MARK: Actions
@@ -645,37 +615,6 @@ final class RecordingSettingsSection: NSObject {
     @objc private func fadeDelayStepped() {
         settings.recordingFadeDelay = fadeDelayStepper.integerValue
         showFadeDelay(settings.recordingFadeDelay)
-    }
-
-    private func hotKeyRecorded(_ combo: HotKeyCombo, kind: RecordingHotKey) {
-        switch kind {
-        case .drawMode: settings.recordingDrawModeHotKey = combo
-        case .magicPen: settings.recordingMagicPenHotKey = combo
-        }
-        showHotKey(combo, kind: kind)
-    }
-
-    @objc private func resetHotKey() {
-        reset(.drawMode)
-    }
-
-    @objc private func resetMagicPenHotKey() {
-        reset(.magicPen)
-    }
-
-    /// Back to the default — unless the other recorder holds it now (then
-    /// the person is told why, as for a typed clash).
-    private func reset(_ kind: RecordingHotKey) {
-        recorder(for: kind).cancelRecording()
-        let other = kind == .drawMode ? settings.recordingMagicPenHotKey : settings.recordingDrawModeHotKey
-        if other == kind.defaultCombo {
-            NSSound.beep()
-            let otherKind: RecordingHotKey = kind == .drawMode ? .magicPen : .drawMode
-            showHotKeyFeedback(.reserved(ReservedHotKey(combo: other, name: otherKind.name)), kind: kind)
-            return
-        }
-        hotKeyRecorded(kind.defaultCombo, kind: kind)
-        showHotKeyFeedback(nil, kind: kind)
     }
 
     // MARK: Building blocks
@@ -774,15 +713,117 @@ final class RecordingSettingsSection: NSObject {
     }
 }
 
-/// A recording shortcut field (draw mode, Magic Pen — `kind`): click (or
-/// Space) to record, then press the new combination. Every key goes through PURE `HotKeyRecorderInput`; keys
+/// One remappable hot key's Settings controls (`SnappyHotKey`): the
+/// recorder, its Reset button and the hint under them, which shows why a
+/// shortcut was refused. Every change goes through `GlobalHotKeys`, which
+/// binds it at once — a refused one leaves the old shortcut in place.
+@MainActor
+private final class HotKeyField: NSObject {
+    let hotKey: SnappyHotKey
+    let hint: NSTextField
+    /// Recorder + Reset, for the grid's control column.
+    let row: NSStackView
+    /// A hint changed its line count — the window refits.
+    var onHeightChange: (() -> Void)?
+    private let hotKeys: GlobalHotKeys
+    private let recorder: HotKeyRecorderButton
+    private let resetButton = NSButton(title: "Reset", target: nil, action: nil)
+    private let hintText: String
+
+    /// `hint` may be shared with another field (the two capture hot keys).
+    init(_ hotKey: SnappyHotKey, hotKeys: GlobalHotKeys, hint: NSTextField, hintText: String) {
+        self.hotKey = hotKey
+        self.hotKeys = hotKeys
+        self.hint = hint
+        self.hintText = hintText
+        recorder = HotKeyRecorderButton(kind: hotKey)
+        row = NSStackView(views: [recorder, resetButton])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 6
+        super.init()
+        recorder.reserved = { [hotKeys] in hotKey.reserved(in: hotKeys.bindings) }
+        recorder.onRecord = { [weak self] combo in self?.recorded(combo) }
+        recorder.onFeedback = { [weak self] rejection in self?.showFeedback(rejection) }
+        // Snappy's own hot keys must reach the recorder, not fire.
+        recorder.onRecordingChange = { [hotKeys] active in hotKeys.setRecorderActive(active) }
+        resetButton.target = self
+        resetButton.action = #selector(reset)
+        resetButton.toolTip = hotKey.resetToolTip
+        // ≥ 28 pt controls (Design decision, see the padding stepper).
+        recorder.controlSize = .large
+        resetButton.controlSize = .large
+    }
+
+    /// Shows the saved shortcut, abandoning a half-typed one.
+    func sync() {
+        recorder.cancelRecording()
+        show(hotKeys.bindings[hotKey])
+        showFeedback(nil)
+    }
+
+    private func show(_ combo: HotKeyCombo) {
+        recorder.combo = combo
+        resetButton.isEnabled = combo != hotKey.defaultCombo
+    }
+
+    private func recorded(_ combo: HotKeyCombo) {
+        if let rejection = hotKeys.set(hotKey, to: combo) {
+            refuse(rejection)
+        }
+        show(hotKeys.bindings[hotKey])
+    }
+
+    /// Back to the default — refused like a typed shortcut when another hot
+    /// key holds it now, or the system won't give it back.
+    @objc private func reset() {
+        recorder.cancelRecording()
+        if let rejection = hotKeys.reset(hotKey) {
+            refuse(rejection)
+        } else {
+            showFeedback(nil)
+        }
+        show(hotKeys.bindings[hotKey])
+    }
+
+    private func refuse(_ rejection: HotKeyRecorderInput.Rejection) {
+        NSSound.beep()
+        showFeedback(rejection)
+    }
+
+    /// The hint, or why the last key was refused (also spoken, since the
+    /// field itself doesn't change).
+    private func showFeedback(_ rejection: HotKeyRecorderInput.Rejection?) {
+        let lines = hint.intrinsicContentSize.height
+        defer { if hint.intrinsicContentSize.height != lines { onHeightChange?() } }
+        guard let rejection else {
+            hint.stringValue = hintText
+            hint.textColor = .secondaryLabelColor
+            return
+        }
+        hint.stringValue = rejection.message
+        hint.textColor = .labelColor
+        NSAccessibility.post(
+            element: recorder,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: rejection.message,
+                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ]
+        )
+    }
+}
+
+/// A shortcut field (`kind`): click (or Space) to record, then press the new
+/// combination. Every key goes through PURE `HotKeyRecorderInput`; keys
 /// AppKit offers as key equivalents first (⌘/⌃ combos) arrive through
 /// `SettingsWindow.performKeyEquivalent`, the rest through `keyDown`.
-/// Snappy's own global hot keys never arrive at all — Carbon swallows them —
-/// which is why they are also refused here.
+/// Snappy's own hot keys would never arrive — Carbon swallows them — so the
+/// center is suspended while recording (`onRecordingChange`); they are then
+/// refused here as already Snappy's.
 @MainActor
 private final class HotKeyRecorderButton: NSButton {
-    let kind: RecordingHotKey
+    let kind: SnappyHotKey
     var combo: HotKeyCombo {
         didSet { if !isRecording { title = combo.displayString } }
     }
@@ -790,9 +831,11 @@ private final class HotKeyRecorderButton: NSButton {
     var onRecord: ((HotKeyCombo) -> Void)?
     /// A refused key, or nil once the field is back to normal.
     var onFeedback: ((HotKeyRecorderInput.Rejection?) -> Void)?
+    /// Recording started (true) or ended (false), however it ended.
+    var onRecordingChange: ((Bool) -> Void)?
     private(set) var isRecording = false
 
-    init(kind: RecordingHotKey) {
+    init(kind: SnappyHotKey) {
         self.kind = kind
         combo = kind.defaultCombo
         super.init(frame: .zero)
@@ -822,6 +865,7 @@ private final class HotKeyRecorderButton: NSButton {
             isRecording = true
             title = HotKeyRecorderInput.pendingTitle(flags: [])
             bezelColor = .controlAccentColor
+            onRecordingChange?(true)
         }
     }
 
@@ -840,12 +884,15 @@ private final class HotKeyRecorderButton: NSButton {
         return super.resignFirstResponder()
     }
 
-    /// One key press while recording.
+    /// One key press while recording. An accepted combo is only offered
+    /// (`onRecord`): the owner shows what was actually bound.
     func record(_ event: NSEvent) {
-        switch HotKeyRecorderInput.outcome(keyCode: event.keyCode, flags: event.modifierFlags, reserved: reserved()) {
+        let outcome = HotKeyRecorderInput.outcome(
+            keyCode: event.keyCode, flags: event.modifierFlags, rule: kind.modifierRule, reserved: reserved()
+        )
+        switch outcome {
         case .accept(let newCombo):
-            stopRecording()
-            combo = newCombo
+            stopRecording() // resumes the hot keys first, so the bind is real
             onRecord?(newCombo)
         case .cancel:
             cancelRecording()
@@ -872,6 +919,7 @@ private final class HotKeyRecorderButton: NSButton {
         isRecording = false
         bezelColor = nil
         title = combo.displayString
+        onRecordingChange?(false)
         onFeedback?(nil)
     }
 }
