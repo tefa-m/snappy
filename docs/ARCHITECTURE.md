@@ -89,12 +89,17 @@ Sources/Snappy/
                                  via `unregister`);
                                  `register` returns false when the system
                                  refuses a combo, and `isRegistered` means a
-                                 live Carbon hot key — tested; `replace`
-                                 rebinds live and restores the old combo on
-                                 failure, `isAvailable` probes a combo
-                                 (`.availabilityProbe`, released at once),
-                                 `setSuspended` releases every ref while a
-                                 Settings recorder waits — tested;
+                                 live Carbon hot key — tested; a refused
+                                 registration is kept (unbound, combo
+                                 stored) for `retry`/`retryUnbound`;
+                                 `replace` acquires the new combo before
+                                 releasing the old (no rollback), the same
+                                 combo again retries, `isAvailable` probes a
+                                 combo (`.availabilityProbe`, released at
+                                 once), `setSuspended` releases every ref
+                                 while a Settings recorder waits and a
+                                 failed resume keeps the registration
+                                 (`unboundActions`) — tested;
                                  PURE `CaptureHotKeyRoute` makes ⇧⌘4
                                  context-sensitive (no session → capture ·
                                  recording → stop · rest of a session →
@@ -104,8 +109,17 @@ Sources/Snappy/
                                  key's combo refused), bind (capture keys via
                                  `replace`; session keys via the coordinator
                                  mid-session, else `isAvailable`) and only
-                                 then save + `onChange` (menu, Stop tooltip);
-                                 `HotKeyRebinding` seam — tested with a fake
+                                 then save + `onChange` (menu, Stop tooltips,
+                                 Settings fields; also on a layout change);
+                                 the stored combo again = retry; `isLive` /
+                                 `onStatusChange` for the fields' "taken"
+                                 line; `HotKeyRebinding` seam — tested with
+                                 a fake
+    KeyLegend.swift              A key code's label on the current keyboard
+                                 layout (TIS + UCKeyTranslate, main thread
+                                 only, cached until the layout changes),
+                                 PURE US fallback + typed-character rule —
+                                 tested
   Panel/
     PanelGeometry.swift          PURE panel placement/clamping math — unit-tested
     PreviewPanelController.swift Post-capture floating panel (Edit·Copy·Save·OCR·Pin·
@@ -182,7 +196,9 @@ Sources/Snappy/
                                  recording options, the window-parts
                                  "Accessibility prompted once" flag)
     SettingsFormatting.swift     PURE settings helpers — tested:
-                                 HotKeyCombo.displayString, SettingsKeyCommand
+                                 HotKeyCombo.displayString(keyName:) /
+                                 menuKeyEquivalent(keyName:), the one
+                                 ⌘/⌃/⌥ recorder rule, SettingsKeyCommand
                                  (⌘W/X/C/V/A), SaveFolderValidation (only an
                                  existing local directory — the path control
                                  accepts drops), CanvasPaddingInput,
@@ -793,8 +809,10 @@ is still a transparent `NSWindow`.
   Carbon ref first, and an `isolated deinit` unregisters every ref and removes
   the handler (which holds an unretained pointer to the center).
 - **Remapping goes through `GlobalHotKeys`, never straight to `SettingsStore`**
-  (2026-10-20). A combo is saved only after it was bound: `replace` restores
-  the old combo when Carbon refuses the new one, session keys are rebound by
+  (2026-10-20). A combo is saved only after it was bound: `replace` acquires
+  the new combo **before** releasing the old one (Carbon allows two refs under
+  one `EventHotKeyID`), so a refusal leaves the old binding untouched and
+  there is no rollback that could itself fail; session keys are rebound by
   `RecordingCoordinator.rebindSessionHotKey` mid-session (or probed with
   `isAvailable` outside one), so the store never holds a combo that doesn't
   work and a refusal leaves the old one live. The availability probe uses its
@@ -802,10 +820,33 @@ is still a transparent `NSWindow`.
   one center and handler. While a Settings recorder waits for a key the center
   is **suspended** (every Carbon ref released, registrations kept): otherwise
   Carbon would swallow ⇧⌘4 and start a capture instead of the recorder
-  refusing it; resuming happens *before* the accepted combo is bound, so the
-  bind is real. Every place that names a hot key reads the live combo (menu
-  key equivalents in `validateMenuItem`, the recording ● menu's Stop, the
-  toolbar's Stop tooltip via `setStopShortcut`, the Settings fields).
+  refusing it. An accepted combo is bound **while still suspended** — a
+  suspended `replace` / `retry` is the real bind — and only then do the rest
+  resume, so the answer is never a guess. **Recording always ends**, however
+  the window goes: `SettingsWindow` cancels it in `close()` (which keeps the
+  first responder and never calls `resignFirstResponder`), `resignKey()`, on
+  `NSApplication.didResignActiveNotification`, with `windowWillClose` as a
+  backstop — otherwise every hot key would stay paused for the session.
+  **A registration is never silently dropped:** one the system refuses (at
+  launch, or on resume because another app took the combo during the pause)
+  keeps its combo, unbound (`HotKeyCenter.unboundActions`); Settings shows
+  "That shortcut is already taken — <name> is off …" under the field
+  (`GlobalHotKeys.isLive`), Reset stays enabled, and it is retried when
+  Settings becomes key, when the app becomes active, and when the same combo
+  is recorded again. Every place that names a hot key reads the live combo
+  (menu key equivalents in `validateMenuItem`, the recording ● menu's Stop,
+  the ●'s tooltip — set on entering recording and updated by `onChange` —,
+  the toolbar's Stop tooltip via `setStopShortcut`, the Settings fields).
+- **Hot key labels follow the keyboard layout; key codes don't.** A
+  `HotKeyCombo` stores the virtual key code (the physical key — what Carbon
+  binds and what the recorder receives as `NSEvent.keyCode`). Its label comes
+  from `KeyLegend`: the current input source's layout via `UCKeyTranslate`
+  (unshifted, then shifted for AZERTY digits; ASCII letters/digits only, else
+  the US name — as macOS does on non-Latin layouts). The TIS API aborts off
+  the main thread, so only the main thread reads it (elsewhere: US). On
+  `kTISNotifySelectedKeyboardInputSourceChanged` the AppDelegate clears the
+  cache and `GlobalHotKeys.keyboardLayoutDidChange` re-announces all four
+  combos, so Settings, the ● tooltip and the toolbar re-label.
 
 ### Annotation editor (M4–M6)
 
@@ -1194,9 +1235,10 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
 - **⇧⌘4 is context-sensitive** (`CaptureHotKeyRoute`: no session → capture ·
   recording → stop · rest of a session → ignored). The draw-mode toggle
   (⌃⌥D by default) is registered through the single `HotKeyCenter` **only
-  while a session is active**, and the combo **must include ⌃ or ⌥**
-  (Leader decision): Carbon swallows it system-wide for the whole session, so
-  a ⌘ combo would kill ⌘C/⌘V in the recorded app. **A registration the
+  while a session is active**. Like every Snappy hot key its combo needs at
+  least one of ⌘/⌃/⌥ (Creator decision 2026-10-20, replacing the 2026-10-09
+  ⌃/⌥-only rule — so ⌘D / ⌘P are allowed; a ⌘ combo is swallowed system-wide
+  for the session, which is the person's call). **A registration the
   system refuses** (another app owns the combo) is never silent: the
   coordinator posts a banner (`UserFacingText.drawModeHotKeyUnavailable`,
   beep + VoiceOver if banners are off), the chrome is told
