@@ -7,7 +7,8 @@ import AppKit
 @MainActor
 final class SettingsWindowController: NSObject {
     private let settings: SettingsStore
-    private let window: NSWindow
+    private let hotKeys: GlobalHotKeys
+    let window: NSWindow // internal for tests
     /// Pop-up path control: folder icon + name, its menu lists the parent
     /// folders plus a Choose… item (HIG Path controls) — replaces a raw POSIX
     /// path label and a separate Choose… button.
@@ -46,14 +47,17 @@ final class SettingsWindowController: NSObject {
     ) {
         self.settings = settings
         let hotKeys = hotKeys ?? GlobalHotKeys(settings: settings, center: nil)
+        self.hotKeys = hotKeys
         recording = RecordingSettingsSection(settings: settings, hotKeys: hotKeys, setMagicPenWidth: setMagicPenWidth)
         // One hint for both capture fields; a refusal replaces it.
         let shortcutHint = Self.hintLabel(Self.shortcutHintText)
+        let captureKeys: [SnappyHotKey] = [.captureArea, .captureFullscreen]
         captureAreaField = HotKeyField(
-            .captureArea, hotKeys: hotKeys, hint: shortcutHint, hintText: Self.shortcutHintText
+            .captureArea, hotKeys: hotKeys, hint: shortcutHint, hintText: Self.shortcutHintText, sharedBy: captureKeys
         )
         fullscreenField = HotKeyField(
-            .captureFullscreen, hotKeys: hotKeys, hint: shortcutHint, hintText: Self.shortcutHintText
+            .captureFullscreen, hotKeys: hotKeys, hint: shortcutHint, hintText: Self.shortcutHintText,
+            sharedBy: captureKeys
         )
         window = SettingsWindow(
             contentRect: NSRect(x: 0, y: 0, width: 460, height: 300),
@@ -291,9 +295,29 @@ final class SettingsWindowController: NSObject {
     }
 }
 
+extension SettingsWindowController {
+    /// A recorder is waiting for a key (the hot keys are paused meanwhile).
+    var isRecordingShortcut: Bool { (window.firstResponder as? HotKeyRecorderButton)?.isRecording == true }
+
+    /// Starts `hotKey`'s recorder, as a click would — for tests.
+    func recordShortcut(_ hotKey: SnappyHotKey) {
+        let fields = [captureAreaField, fullscreenField] + recording.hotKeyFields
+        fields.first { $0.hotKey == hotKey }?.startRecording()
+    }
+}
+
 extension SettingsWindowController: NSWindowDelegate {
+    /// Opening Settings retries a hot key another app had taken, so the
+    /// fields show whether it works now.
     func windowDidBecomeKey(_ notification: Notification) {
         recording.refreshWindowPartsStatus()
+        hotKeys.retryUnbound()
+    }
+
+    /// Backstop for `SettingsWindow.close` — a recorder never outlives the
+    /// window with every hot key paused.
+    func windowWillClose(_ notification: Notification) {
+        (window as? SettingsWindow)?.cancelShortcutRecording()
     }
 
     func windowDidChangeScreen(_ notification: Notification) {
@@ -341,9 +365,38 @@ private final class SettingsWindow: NSWindow {
         }
     }
 
+    override init(
+        contentRect: NSRect, styleMask style: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool
+    ) {
+        super.init(contentRect: contentRect, styleMask: style, backing: backing, defer: flag)
+        // Switching apps (⌘Tab, a click elsewhere) abandons it too — also
+        // when this window wasn't key at that moment.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(applicationDidResignActive),
+            name: NSApplication.didResignActiveNotification, object: nil
+        )
+    }
+
     /// Clicking into another app abandons a half-typed shortcut.
     override func resignKey() {
         super.resignKey()
+        cancelShortcutRecording()
+    }
+
+    /// Review r1 #1: `close()` keeps the first responder and never calls its
+    /// `resignFirstResponder`, so a recorder would stay recording — with
+    /// every global hot key paused — after the red close button or ⌘W.
+    override func close() {
+        cancelShortcutRecording()
+        super.close()
+    }
+
+    @objc private func applicationDidResignActive() {
+        cancelShortcutRecording()
+    }
+
+    /// Ends a recorder's recording (resuming the hot keys); a no-op otherwise.
+    func cancelShortcutRecording() {
         (firstResponder as? HotKeyRecorderButton)?.cancelRecording()
     }
 }
@@ -385,6 +438,9 @@ final class RecordingSettingsSection: NSObject {
     private let partsSettingsButton = NSButton(title: "Open System Settings…", target: nil, action: nil)
     private let partsHint = SettingsWindowController.hintLabel("")
     private var partsStatus: WindowPartPermission.Status?
+
+    /// Its two recorders, for `SettingsWindowController.recordShortcut`.
+    fileprivate var hotKeyFields: [HotKeyField] { [drawModeField, magicPenField] }
 
     /// A hint under a recorder changed its line count — the window refits.
     var onHeightChange: (() -> Void)? {
@@ -729,13 +785,20 @@ private final class HotKeyField: NSObject {
     private let recorder: HotKeyRecorderButton
     private let resetButton = NSButton(title: "Reset", target: nil, action: nil)
     private let hintText: String
+    /// The hot keys whose fields show their status in `hint`.
+    private let hintHotKeys: [SnappyHotKey]
 
-    /// `hint` may be shared with another field (the two capture hot keys).
-    init(_ hotKey: SnappyHotKey, hotKeys: GlobalHotKeys, hint: NSTextField, hintText: String) {
+    /// `hint` may be shared with other fields (the two capture hot keys):
+    /// `sharedBy` lists them all.
+    init(
+        _ hotKey: SnappyHotKey, hotKeys: GlobalHotKeys, hint: NSTextField, hintText: String,
+        sharedBy hintHotKeys: [SnappyHotKey]? = nil
+    ) {
         self.hotKey = hotKey
         self.hotKeys = hotKeys
         self.hint = hint
         self.hintText = hintText
+        self.hintHotKeys = hintHotKeys ?? [hotKey]
         recorder = HotKeyRecorderButton(kind: hotKey)
         row = NSStackView(views: [recorder, resetButton])
         row.orientation = .horizontal
@@ -747,6 +810,17 @@ private final class HotKeyField: NSObject {
         recorder.onFeedback = { [weak self] rejection in self?.showFeedback(rejection) }
         // Snappy's own hot keys must reach the recorder, not fire.
         recorder.onRecordingChange = { [hotKeys] active in hotKeys.setRecorderActive(active) }
+        // A combo or its label changed elsewhere (a layout switch, the other
+        // field); a hot key went live or was lost (resume, retry).
+        hotKeys.onChange.append { [weak self] changed, combo in
+            guard let self, changed == self.hotKey, !self.recorder.isRecording else { return }
+            self.show(combo)
+        }
+        hotKeys.onStatusChange.append { [weak self] in
+            guard let self, !self.recorder.isRecording else { return }
+            self.show(hotKeys.bindings[hotKey])
+            self.showFeedback(nil)
+        }
         resetButton.target = self
         resetButton.action = #selector(reset)
         resetButton.toolTip = hotKey.resetToolTip
@@ -762,16 +836,24 @@ private final class HotKeyField: NSObject {
         showFeedback(nil)
     }
 
-    private func show(_ combo: HotKeyCombo) {
-        recorder.combo = combo
-        resetButton.isEnabled = combo != hotKey.defaultCombo
+    /// Starts recording, as a click would.
+    func startRecording() {
+        recorder.startRecording()
     }
 
-    private func recorded(_ combo: HotKeyCombo) {
-        if let rejection = hotKeys.set(hotKey, to: combo) {
-            refuse(rejection)
-        }
+    /// Reset stays enabled on the default while it isn't live: it retries.
+    private func show(_ combo: HotKeyCombo) {
+        recorder.combo = combo
+        resetButton.isEnabled = combo != hotKey.defaultCombo || !hotKeys.isLive(hotKey)
+    }
+
+    /// Bound while the hot keys are still paused (`HotKeyRecorderButton`
+    /// resumes them only afterwards): the new combo is held before the old
+    /// one is let go, and the recorder shows a refusal itself.
+    private func recorded(_ combo: HotKeyCombo) -> HotKeyRecorderInput.Rejection? {
+        let rejection = hotKeys.set(hotKey, to: combo)
         show(hotKeys.bindings[hotKey])
+        return rejection
     }
 
     /// Back to the default — refused like a typed shortcut when another hot
@@ -791,23 +873,30 @@ private final class HotKeyField: NSObject {
         showFeedback(rejection)
     }
 
-    /// The hint, or why the last key was refused (also spoken, since the
-    /// field itself doesn't change).
+    /// Why the last key was refused (also spoken, since the field itself
+    /// doesn't change); nil: the hint — or, while a hot key sharing it isn't
+    /// live, that it's taken (`SnappyHotKey.unboundMessage`).
     private func showFeedback(_ rejection: HotKeyRecorderInput.Rejection?) {
         let lines = hint.intrinsicContentSize.height
         defer { if hint.intrinsicContentSize.height != lines { onHeightChange?() } }
-        guard let rejection else {
+        let message: String
+        if let rejection {
+            message = rejection.message
+        } else if let unbound = hintHotKeys.first(where: { !hotKeys.isLive($0) }) {
+            message = unbound.unboundMessage
+        } else {
             hint.stringValue = hintText
             hint.textColor = .secondaryLabelColor
             return
         }
-        hint.stringValue = rejection.message
+        guard hint.stringValue != message else { return }
+        hint.stringValue = message
         hint.textColor = .labelColor
         NSAccessibility.post(
             element: recorder,
             notification: .announcementRequested,
             userInfo: [
-                .announcement: rejection.message,
+                .announcement: message,
                 .priority: NSAccessibilityPriorityLevel.high.rawValue,
             ]
         )
@@ -828,7 +917,9 @@ private final class HotKeyRecorderButton: NSButton {
         didSet { if !isRecording { title = combo.displayString } }
     }
     var reserved: () -> [ReservedHotKey] = { [] }
-    var onRecord: ((HotKeyCombo) -> Void)?
+    /// An accepted combo, offered while the hot keys are still paused;
+    /// returns why it was refused, nil when it took.
+    var onRecord: ((HotKeyCombo) -> HotKeyRecorderInput.Rejection?)?
     /// A refused key, or nil once the field is back to normal.
     var onFeedback: ((HotKeyRecorderInput.Rejection?) -> Void)?
     /// Recording started (true) or ended (false), however it ended.
@@ -861,12 +952,16 @@ private final class HotKeyRecorderButton: NSButton {
         if isRecording {
             cancelRecording()
         } else {
-            guard window?.makeFirstResponder(self) == true else { return }
-            isRecording = true
-            title = HotKeyRecorderInput.pendingTitle(flags: [])
-            bezelColor = .controlAccentColor
-            onRecordingChange?(true)
+            startRecording()
         }
+    }
+
+    func startRecording() {
+        guard !isRecording, window?.makeFirstResponder(self) == true else { return }
+        isRecording = true
+        title = HotKeyRecorderInput.pendingTitle(flags: [])
+        bezelColor = .controlAccentColor
+        onRecordingChange?(true)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -888,12 +983,19 @@ private final class HotKeyRecorderButton: NSButton {
     /// (`onRecord`): the owner shows what was actually bound.
     func record(_ event: NSEvent) {
         let outcome = HotKeyRecorderInput.outcome(
-            keyCode: event.keyCode, flags: event.modifierFlags, rule: kind.modifierRule, reserved: reserved()
+            keyCode: event.keyCode, flags: event.modifierFlags, reserved: reserved()
         )
         switch outcome {
         case .accept(let newCombo):
-            stopRecording() // resumes the hot keys first, so the bind is real
-            onRecord?(newCombo)
+            // Review r1 #2: bind first, still paused — `HotKeyCenter.replace`
+            // acquires the new combo for real, and a refusal keeps the old
+            // one — and only then resume the rest.
+            let rejection = onRecord?(newCombo)
+            stopRecording()
+            if let rejection {
+                NSSound.beep()
+                onFeedback?(rejection)
+            }
         case .cancel:
             cancelRecording()
         case .leave:
@@ -915,11 +1017,13 @@ private final class HotKeyRecorderButton: NSButton {
         stopRecording()
     }
 
+    /// Feedback is cleared before the resume, so the status the resume
+    /// reports (a combo taken meanwhile) stays visible.
     private func stopRecording() {
         isRecording = false
         bezelColor = nil
         title = combo.displayString
-        onRecordingChange?(false)
         onFeedback?(nil)
+        onRecordingChange?(false)
     }
 }
