@@ -16,7 +16,8 @@ import AppKit
 /// panel's Record, "Record Area…"; or Retake) → Setup ↔ snapping → countdown →
 /// recording → stopping → finished (recording window) | cancelled. The session
 /// ends at finished/cancelled: every per-session piece is closed and dropped
-/// and the session-only ⌃⌥D / ⌃⌥P hot keys are unregistered.
+/// and the session-only ⌃⌥D / ⌃⌥P hot keys are unregistered. Settings may
+/// rebind them mid-session (`rebindSessionHotKey`).
 ///
 /// **Session scoping.** Every sink, pipeline callback and asynchronous
 /// start/stop result carries the id of the session that created it and is
@@ -280,18 +281,17 @@ final class RecordingCoordinator {
         // Session-only; another app may own the combo. Then the toolbar
         // doesn't advertise it and the person is told (the toggle still works).
         let combo = settingsValue.drawModeHotKey
-        let registered = hotKeys?.register(.toggleDrawMode, combo: combo) { [weak self] in
-            self?.handle(.command(.toggleDrawMode), session: id)
-        } ?? false
+        let registered = registerSessionHotKey(.drawMode, combo: combo, session: id)
         chrome.setDrawModeShortcut(registered ? combo.displayString : nil)
         // The Magic Pen toggle likewise. A combo equal to the draw-mode one
         // (possible with a hand-edited or pre-Magic-Pen draw-mode setting —
         // the Settings recorders refuse it) is not registered twice.
         let magicCombo = settingsValue.magicPenHotKey
-        let magicRegistered = magicCombo != combo && hotKeys?.register(.toggleMagicPen, combo: magicCombo) {
-            [weak self] in self?.handle(.command(.toggleMagicPen), session: id)
-        } ?? false
+        let magicRegistered = magicCombo != combo && registerSessionHotKey(.magicPen, combo: magicCombo, session: id)
         chrome.setMagicPenShortcut(magicRegistered ? magicCombo.displayString : nil)
+        // Stop's tooltip names the configured Capture Area combo (⇧⌘4 stops)
+        // — only while it is live.
+        chrome.setStopShortcut(stopShortcut(settings.captureHotKey))
 
         // Window levels, not call order, stack them (`RecordingWindowLevel`).
         overlay.show(session)
@@ -307,6 +307,66 @@ final class RecordingCoordinator {
         onPhaseChange?(session.phase)
         if retake != nil { refreshRetakeTarget(target, session: id) }
         return true
+    }
+
+    /// Registers a session hot key whose press goes to session `id`; false
+    /// when the system refuses the combo (or there is no center).
+    private func registerSessionHotKey(_ hotKey: SnappyHotKey, combo: HotKeyCombo, session id: Int) -> Bool {
+        let command: RecordingCommand = hotKey == .magicPen ? .toggleMagicPen : .toggleDrawMode
+        return hotKeys?.register(hotKey.action, combo: combo) { [weak self] in
+            self?.handle(.command(command), session: id)
+        } ?? false
+    }
+
+    /// Settings changed a session hot key (`GlobalHotKeys.set`): nil when no
+    /// session holds the session hot keys (the next one reads the setting),
+    /// else whether `combo` took. A refused combo leaves the old binding —
+    /// and the toolbar's tooltip — as they were; one that took is advertised
+    /// at once, also for a hot key the system had refused at session start.
+    func rebindSessionHotKey(_ hotKey: SnappyHotKey, to combo: HotKeyCombo) -> Bool? {
+        guard hotKey.isSessionOnly, let chrome, session != nil, let hotKeys else { return nil }
+        // Registered (live, paused, or refused and waiting for a retry):
+        // rebind — the new combo is held before the old is let go.
+        let bound = if hotKeys.combo(for: hotKey.action) != nil {
+            hotKeys.replace(hotKey.action, with: combo)
+        } else {
+            registerSessionHotKey(hotKey, combo: combo, session: sessionID)
+        }
+        guard bound else { return false }
+        if hotKey == .magicPen {
+            chrome.setMagicPenShortcut(combo.displayString)
+        } else {
+            chrome.setDrawModeShortcut(combo.displayString)
+        }
+        return true
+    }
+
+    /// Settings changed the Capture Area hot key — the open toolbar's Stop
+    /// tooltip names the new combo at once.
+    func captureHotKeyDidChange(_ combo: HotKeyCombo) {
+        chrome?.setStopShortcut(stopShortcut(combo))
+    }
+
+    /// Stop's advertised shortcut: the Capture Area combo, or nil while the
+    /// center holds it registered but unbound (refused at launch, or taken by
+    /// another app while a Settings recorder paused the hot keys) — a dead
+    /// combo is never promised. No center (tests): always advertised.
+    private func stopShortcut(_ combo: HotKeyCombo) -> String? {
+        if let hotKeys, hotKeys.combo(for: .captureArea) != nil, !hotKeys.isRegistered(.captureArea) { return nil }
+        return combo.displayString
+    }
+
+    /// The keyboard layout changed, or a hot key went live / was lost (a
+    /// resume, a retry): the open toolbar re-labels its tooltips, advertising
+    /// only a live hot key — Stop's Capture Area combo included.
+    func refreshHotKeyLabels() {
+        guard let chrome, session != nil else { return }
+        chrome.setStopShortcut(stopShortcut(settings.captureHotKey))
+        guard let hotKeys else { return }
+        let draw = hotKeys.combo(for: .toggleDrawMode)
+        chrome.setDrawModeShortcut(hotKeys.isRegistered(.toggleDrawMode) ? draw?.displayString : nil)
+        let magic = hotKeys.combo(for: .toggleMagicPen)
+        chrome.setMagicPenShortcut(hotKeys.isRegistered(.toggleMagicPen) ? magic?.displayString : nil)
     }
 
     /// Retake (Q41): Setup opens at once on the take's target, then looks it
@@ -649,6 +709,12 @@ protocol SessionHotKeyRegistering: AnyObject {
     /// False when the system refused the combo (another app owns it).
     func register(_ action: HotKeyAction, combo: HotKeyCombo, handler: @escaping @MainActor () -> Void) -> Bool
     func unregister(_ action: HotKeyAction)
+    /// True while a live binding backs the action.
+    func isRegistered(_ action: HotKeyAction) -> Bool
+    /// The registered combo, live or not; nil when not registered.
+    func combo(for action: HotKeyAction) -> HotKeyCombo?
+    /// Rebinds a registered action; false (old combo kept) when refused.
+    func replace(_ action: HotKeyAction, with combo: HotKeyCombo) -> Bool
 }
 
 extension HotKeyCenter: SessionHotKeyRegistering {}

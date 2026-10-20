@@ -5,10 +5,15 @@ import Carbon.HIToolbox
 
 extension HotKeyCombo {
     /// Menu-style shortcut text, e.g. "⇧⌘4": modifiers in Apple's order
-    /// (⌃⌥⇧⌘), then the key. Covers the letter and digit keys a screenshot
-    /// shortcut uses; anything else falls back to its key code.
-    var displayString: String {
-        Self.modifierSymbols(carbonModifiers) + (Self.keyNames[Int(keyCode)] ?? "Key \(keyCode)")
+    /// (⌃⌥⇧⌘), then the key as the current keyboard layout labels it
+    /// (`KeyLegend`). Covers the letter and digit keys a shortcut uses;
+    /// anything else falls back to its key code.
+    var displayString: String { displayString(keyName: KeyLegend.name) }
+
+    /// `displayString` with the key named by `keyName` — PURE (tests pass
+    /// `KeyLegend.usName` or a stand-in layout).
+    func displayString(keyName: (UInt32) -> String?) -> String {
+        Self.modifierSymbols(carbonModifiers) + (keyName(keyCode) ?? "Key \(keyCode)")
     }
 
     /// "⌃⌥⇧⌘" for the modifiers set in a Carbon mask, in Apple's order.
@@ -20,17 +25,6 @@ extension HotKeyCombo {
         if carbonModifiers & UInt32(cmdKey) != 0 { text += "⌘" }
         return text
     }
-
-    private static let keyNames: [Int: String] = [
-        kVK_ANSI_0: "0", kVK_ANSI_1: "1", kVK_ANSI_2: "2", kVK_ANSI_3: "3", kVK_ANSI_4: "4",
-        kVK_ANSI_5: "5", kVK_ANSI_6: "6", kVK_ANSI_7: "7", kVK_ANSI_8: "8", kVK_ANSI_9: "9",
-        kVK_ANSI_A: "A", kVK_ANSI_B: "B", kVK_ANSI_C: "C", kVK_ANSI_D: "D", kVK_ANSI_E: "E",
-        kVK_ANSI_F: "F", kVK_ANSI_G: "G", kVK_ANSI_H: "H", kVK_ANSI_I: "I", kVK_ANSI_J: "J",
-        kVK_ANSI_K: "K", kVK_ANSI_L: "L", kVK_ANSI_M: "M", kVK_ANSI_N: "N", kVK_ANSI_O: "O",
-        kVK_ANSI_P: "P", kVK_ANSI_Q: "Q", kVK_ANSI_R: "R", kVK_ANSI_S: "S", kVK_ANSI_T: "T",
-        kVK_ANSI_U: "U", kVK_ANSI_V: "V", kVK_ANSI_W: "W", kVK_ANSI_X: "X", kVK_ANSI_Y: "Y",
-        kVK_ANSI_Z: "Z",
-    ]
 }
 
 /// Standard ⌘-shortcuts the settings window handles itself. Snappy has no
@@ -91,10 +85,31 @@ enum CanvasPaddingInput {
 // MARK: - Settings → Recording (features/recording.md)
 
 extension HotKeyCombo {
-    /// True when `displayString` can name the key (A–Z, 0–9). The draw-mode
-    /// recorder only takes those: "⌃⌥Key 122" would be unreadable, and HIG
-    /// Keyboards advises non-⌘ modifiers "only with the alphabetic characters".
-    var hasKeyName: Bool { Self.keyNames[Int(keyCode)] != nil }
+    /// True when `displayString` can name the key (a letter or digit on the
+    /// current layout, or in the US fallback). The recorders only take
+    /// those: "⌃⌥Key 122" would be unreadable, and HIG Keyboards advises
+    /// non-⌘ modifiers "only with the alphabetic characters".
+    var hasKeyName: Bool { KeyLegend.name(for: keyCode) != nil }
+
+    /// The combo as an `NSMenuItem` key equivalent (display-only — the
+    /// Carbon hot key fires it): the key's current-layout label lowercased,
+    /// so AppKit doesn't add a ⇧ of its own; empty for a key `displayString`
+    /// can't name. Menus re-read it each time they open (`validateMenuItem`),
+    /// so a layout change shows at the next open.
+    var menuKeyEquivalent: (key: String, modifiers: NSEvent.ModifierFlags) {
+        menuKeyEquivalent(keyName: KeyLegend.name)
+    }
+
+    /// `menuKeyEquivalent` with the key named by `keyName` — PURE.
+    func menuKeyEquivalent(keyName: (UInt32) -> String?) -> (key: String, modifiers: NSEvent.ModifierFlags) {
+        guard let name = keyName(keyCode) else { return ("", []) }
+        var modifiers: NSEvent.ModifierFlags = []
+        if carbonModifiers & UInt32(cmdKey) != 0 { modifiers.insert(.command) }
+        if carbonModifiers & UInt32(shiftKey) != 0 { modifiers.insert(.shift) }
+        if carbonModifiers & UInt32(optionKey) != 0 { modifiers.insert(.option) }
+        if carbonModifiers & UInt32(controlKey) != 0 { modifiers.insert(.control) }
+        return (name.lowercased(), modifiers)
+    }
 }
 
 /// Menu titles of the recording pop-ups and the fade-delay value.
@@ -119,33 +134,27 @@ enum RecordingSettingsText {
     }
 }
 
-/// A shortcut a recording hot key must not take: Snappy's own global ones and
-/// the other recording hot key (Carbon would route the keystroke to only one
-/// of the two bindings).
+/// A shortcut a hot key recorder must not take: another of Snappy's own hot
+/// keys (Carbon would route the keystroke to only one of the two bindings).
 struct ReservedHotKey: Equatable {
     let combo: HotKeyCombo
     /// What it does, as the menu names it ("Capture Area").
     let name: String
-
-    /// ⇧⌘4 / ⇧⌘3 as currently configured.
-    static func snappyGlobal(capture: HotKeyCombo, fullscreen: HotKeyCombo) -> [ReservedHotKey] {
-        [
-            ReservedHotKey(combo: capture, name: "Capture Area"),
-            ReservedHotKey(combo: fullscreen, name: "Capture Entire Screen"),
-        ]
-    }
 }
 
-/// The two session-only recording hot keys, each with its own Settings →
-/// Recording recorder: Draw Mode (⌃⌥D) and Magic Pen (⌃⌥P). Same rules for
-/// both (`HotKeyRecorderInput`); each refuses Snappy's global hot keys and
-/// the other one.
-enum RecordingHotKey: CaseIterable, Equatable {
-    case drawMode, magicPen
+/// Snappy's four remappable global hot keys (2026-10-20), each with its own
+/// Settings recorder + Reset: Capture Area (⇧⌘4) and Capture Entire Screen
+/// (⇧⌘3) — registered for the app's lifetime — and the session-only Draw Mode
+/// (⌃⌥D) and Magic Pen (⌃⌥P). In-session single-letter keys stay fixed.
+enum SnappyHotKey: CaseIterable, Equatable {
+    case captureArea, captureFullscreen, drawMode, magicPen
 
-    /// As the refusal message names it ("… is already Snappy’s Draw Mode shortcut").
+    /// As the menu and the refusal message name it ("… is already Snappy’s
+    /// Draw Mode shortcut").
     var name: String {
         switch self {
+        case .captureArea: "Capture Area"
+        case .captureFullscreen: "Capture Entire Screen"
         case .drawMode: "Draw Mode"
         case .magicPen: "Magic Pen"
         }
@@ -153,10 +162,24 @@ enum RecordingHotKey: CaseIterable, Equatable {
 
     var defaultCombo: HotKeyCombo {
         switch self {
+        case .captureArea: .defaultCapture
+        case .captureFullscreen: .defaultFullscreen
         case .drawMode: .defaultDrawMode
         case .magicPen: .defaultMagicPen
         }
     }
+
+    var action: HotKeyAction {
+        switch self {
+        case .captureArea: .captureArea
+        case .captureFullscreen: .captureFullscreen
+        case .drawMode: .toggleDrawMode
+        case .magicPen: .toggleMagicPen
+        }
+    }
+
+    /// Registered only while a recording session is active.
+    var isSessionOnly: Bool { self == .drawMode || self == .magicPen }
 
     /// The recorder button's tooltip and VoiceOver label.
     var recorderToolTip: String { "Record a new \(name) shortcut (Space)" }
@@ -165,26 +188,72 @@ enum RecordingHotKey: CaseIterable, Equatable {
     /// focused button, not the combo being restored (`<verb phrase> (KEY)`).
     var resetToolTip: String { "Reset the \(name) shortcut to \(defaultCombo.displayString) (Space)" }
 
-    /// What this recorder refuses: ⇧⌘4 / ⇧⌘3 as configured, and the other
-    /// recording hot key's current combo.
-    func reserved(
-        capture: HotKeyCombo, fullscreen: HotKeyCombo, drawMode: HotKeyCombo, magicPen: HotKeyCombo
-    ) -> [ReservedHotKey] {
-        let other: ReservedHotKey = switch self {
-        case .drawMode: ReservedHotKey(combo: magicPen, name: RecordingHotKey.magicPen.name)
-        case .magicPen: ReservedHotKey(combo: drawMode, name: RecordingHotKey.drawMode.name)
-        }
-        return ReservedHotKey.snappyGlobal(capture: capture, fullscreen: fullscreen) + [other]
+    /// What this recorder refuses: every *other* Snappy hot key as configured.
+    func reserved(in bindings: HotKeyBindings) -> [ReservedHotKey] {
+        Self.allCases.filter { $0 != self }.map { ReservedHotKey(combo: bindings[$0], name: $0.name) }
     }
 }
 
-/// A recording shortcut recorder (draw mode, Magic Pen): one key press while
-/// recording → what happens. Esc cancels; Tab leaves the field (and keeps moving focus); every
-/// other key becomes the new combo or is rejected with a reason.
-///
-/// The combo must hold ⌃ or ⌥ (Design decision, 2026-10-09): Carbon swallows
-/// it system-wide for the whole session, so a ⌘ shortcut like ⌘C would stop
-/// copy/paste working in the app being recorded.
+extension SnappyHotKey {
+    /// Under the field while its stored combo isn't live — another app took
+    /// it (at launch, or while a recorder had the hot keys paused). Leads
+    /// with the approved refusal copy; names the hot key, since the two
+    /// capture fields share one hint. Snappy retries when Settings opens or
+    /// the app becomes active, and when the same combo is recorded again.
+    var unboundMessage: String {
+        "That shortcut is already taken — \(name) is off until it’s free or you choose another."
+    }
+}
+
+/// The configured combo of each `SnappyHotKey` — PURE value, read from and
+/// written to `SettingsStore`.
+struct HotKeyBindings: Equatable {
+    var captureArea: HotKeyCombo = .defaultCapture
+    var captureFullscreen: HotKeyCombo = .defaultFullscreen
+    var drawMode: HotKeyCombo = .defaultDrawMode
+    var magicPen: HotKeyCombo = .defaultMagicPen
+
+    static let defaults = HotKeyBindings()
+
+    subscript(hotKey: SnappyHotKey) -> HotKeyCombo {
+        get {
+            switch hotKey {
+            case .captureArea: captureArea
+            case .captureFullscreen: captureFullscreen
+            case .drawMode: drawMode
+            case .magicPen: magicPen
+            }
+        }
+        set {
+            switch hotKey {
+            case .captureArea: captureArea = newValue
+            case .captureFullscreen: captureFullscreen = newValue
+            case .drawMode: drawMode = newValue
+            case .magicPen: magicPen = newValue
+            }
+        }
+    }
+
+    /// `combo` for `hotKey` is refused when another Snappy hot key holds it
+    /// now (Carbon would route the keystroke to only one of the two). Its own
+    /// current combo is never a clash.
+    func conflict(for hotKey: SnappyHotKey, combo: HotKeyCombo) -> HotKeyRecorderInput.Rejection? {
+        hotKey.reserved(in: self).first { $0.combo == combo }.map { .reserved($0) }
+    }
+
+    /// Reset to the default — refused (with the reason) when another hot key
+    /// holds that default now, as for a typed clash.
+    func resetRejection(for hotKey: SnappyHotKey) -> HotKeyRecorderInput.Rejection? {
+        conflict(for: hotKey, combo: hotKey.defaultCombo)
+    }
+}
+
+/// A shortcut recorder: one key press while recording → what happens. Esc
+/// cancels; Tab leaves the field (and keeps moving focus); every other key
+/// becomes the new combo or is rejected with a reason. One rule for all four
+/// hot keys (Creator decision, 2026-10-20 — replaces the 2026-10-09 ⌃/⌥-only
+/// rule for the session keys): at least one of ⌘, ⌃ or ⌥, so ⌘D / ⌘P may be
+/// Draw Mode / Magic Pen.
 enum HotKeyRecorderInput {
     enum Outcome: Equatable {
         case accept(HotKeyCombo)
@@ -196,21 +265,23 @@ enum HotKeyRecorderInput {
     }
 
     enum Rejection: Equatable {
-        /// No modifier but ⇧ held.
+        /// None of ⌘, ⌃, ⌥ held (a bare key, or ⇧ alone).
         case needsModifier
-        /// ⌘ (or ⇧⌘) without ⌃ or ⌥ — that belongs to the user's apps.
-        case commandOnly
         /// Not a letter or digit.
         case unsupportedKey
         case reserved(ReservedHotKey)
+        /// `RegisterEventHotKey` refused it: macOS or another app owns the
+        /// combo. The old shortcut stays.
+        case unavailable(HotKeyCombo)
 
         /// Shown under the field in place of the hint, and announced.
         var message: String {
             switch self {
-            case .needsModifier: "Include ⌃ or ⌥ in the shortcut."
-            case .commandOnly: "Include ⌃ or ⌥ — ⌘ shortcuts belong to your apps."
+            case .needsModifier: "Include ⌘, ⌃ or ⌥ in the shortcut."
             case .unsupportedKey: "Use a letter or number key."
             case .reserved(let hotKey): "\(hotKey.combo.displayString) is already Snappy’s \(hotKey.name) shortcut."
+            // Approved copy, verbatim (Creator decision, 2026-10-20).
+            case .unavailable: "That shortcut is already taken"
             }
         }
     }
@@ -218,13 +289,15 @@ enum HotKeyRecorderInput {
     private static let escapeKeyCode = UInt16(kVK_Escape)
     private static let tabKeyCode = UInt16(kVK_Tab)
 
-    static func outcome(keyCode: UInt16, flags: NSEvent.ModifierFlags, reserved: [ReservedHotKey]) -> Outcome {
+    static func outcome(
+        keyCode: UInt16,
+        flags: NSEvent.ModifierFlags,
+        reserved: [ReservedHotKey]
+    ) -> Outcome {
         let modifiers = carbonModifiers(from: flags)
         if keyCode == escapeKeyCode { return .cancel }
         if keyCode == tabKeyCode, modifiers & ~UInt32(shiftKey) == 0 { return .leave }
-        guard modifiers & UInt32(controlKey | optionKey) != 0 else {
-            return .reject(modifiers & UInt32(cmdKey) != 0 ? .commandOnly : .needsModifier)
-        }
+        guard modifiers & UInt32(cmdKey | controlKey | optionKey) != 0 else { return .reject(.needsModifier) }
         let combo = HotKeyCombo(keyCode: UInt32(keyCode), carbonModifiers: modifiers)
         guard combo.hasKeyName else { return .reject(.unsupportedKey) }
         if let taken = reserved.first(where: { $0.combo == combo }) { return .reject(.reserved(taken)) }

@@ -4,7 +4,7 @@
 
 Milestone M2's core (priority P2): **⇧⌘4** from anywhere triggers area capture, then a small borderless floating panel appears near the captured area with an image preview and the actions **Edit · Copy · Save · OCR · Pin** (in that order).
 
-- **Hot keys:** Carbon `RegisterEventHotKey` wrapped in `HotKeyCenter` — **⇧⌘4** → area capture, **⇧⌘3** → fullscreen capture; both combos stored in `UserDefaults` under separate keys (configurable later). They deliberately override the system's own ⇧⌘4 / ⇧⌘3, which must be disabled in *System Settings → Keyboard → Keyboard Shortcuts → Screenshots*. One center owns both bindings and routes them by `EventHotKeyID` (see `docs/ARCHITECTURE.md` — a second center would send both hot keys to whichever registered last)
+- **Hot keys:** Carbon `RegisterEventHotKey` wrapped in `HotKeyCenter` — **⇧⌘4** → area capture, **⇧⌘3** → fullscreen capture; both combos stored in `UserDefaults` under separate keys and **remappable in Settings** since 2026-10-20 ([shortcuts-ux.md](shortcuts-ux.md) › Remappable global hot keys). They deliberately override the system's own ⇧⌘4 / ⇧⌘3, which must be disabled in *System Settings → Keyboard → Keyboard Shortcuts → Screenshots*. One center owns both bindings and routes them by `EventHotKeyID` (see `docs/ARCHITECTURE.md` — a second center would send both hot keys to whichever registered last)
 - **Panel:** non-activating borderless `NSPanel` (`.nonactivatingPanel`, level `.floating`) — takes key status without stealing the frontmost app's focus. Content sits in a Liquid Glass `NSGlassEffectView` (macOS 26, `cornerRadius = 10`). Placement clamped to screen edges (pure `PanelGeometry`). Esc/Q/click-away dismiss; every action auto-dismisses the panel
 - **Actions:** borderless toolbar-style icon buttons (SF Symbols, 32×28 pt, 8 pt apart) with verb-phrase tooltips ending in the key, e.g. "Save PNG to Desktop (S)"; single keys **E/C/S/O/P** trigger them. Copy writes PNG+TIFF to the pasteboard; Save writes `Shot yyyy-MM-dd 'at' HH.mm.ss.png` (pure `ScreenshotNamer`) to the configured folder (default `~/Desktop`, changeable in Settings); Edit opens the [editor](editor.md); OCR and Pin have their own feature docs
 
@@ -49,6 +49,8 @@ See `docs/ARCHITECTURE.md` for the panel invariants (dual click-away monitors, n
 - [x] Save: PNG lands in the configured folder with the timestamped name
 - [x] Esc and click-away dismiss the panel; actions auto-dismiss it (except Pin)
 - [x] Pin items — see [pin.md](pin.md)
+
+- **2026-10-20** — Both capture hot keys are remappable in Settings (click-to-record field + Reset each, applied at once, no restart) — see [shortcuts-ux.md](shortcuts-ux.md); the menu items show the configured combos
 
 ## Manual checklist — ⇧⌘3 (2026-08-25, unverified)
 

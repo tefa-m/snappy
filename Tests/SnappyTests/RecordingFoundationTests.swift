@@ -302,7 +302,9 @@ struct HotKeyActionIDTests {
         #expect(HotKeyAction.captureFullscreen.rawValue == 2)
         #expect(HotKeyAction.toggleDrawMode.rawValue == 3)
         #expect(HotKeyAction.toggleMagicPen.rawValue == 4)
-        #expect(HotKeyAction.allCases == [.captureArea, .captureFullscreen, .toggleDrawMode, .toggleMagicPen])
+        #expect(HotKeyAction.availabilityProbe.rawValue == 5)
+        #expect(HotKeyAction.allCases
+            == [.captureArea, .captureFullscreen, .toggleDrawMode, .toggleMagicPen, .availabilityProbe])
     }
 }
 

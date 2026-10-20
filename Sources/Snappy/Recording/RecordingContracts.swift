@@ -421,6 +421,11 @@ protocol RecordingChromeHosting: AnyObject {
     func setDrawModeShortcut(_ shortcut: String?)
     /// The Magic Pen hot key, same rules as `setDrawModeShortcut`.
     func setMagicPenShortcut(_ shortcut: String?)
+    /// The Capture Area hot key Stop's tooltip names (it stops a recording),
+    /// or nil while that combo isn't live (the system refused it) — then no
+    /// tooltip names it. Called before `show`, and again whenever Settings
+    /// changes it or its live status changes.
+    func setStopShortcut(_ shortcut: String?)
     func close()
 }
 
@@ -428,6 +433,7 @@ extension RecordingChromeHosting {
     /// Fakes that don't care about the advertised shortcut.
     func setDrawModeShortcut(_ shortcut: String?) {}
     func setMagicPenShortcut(_ shortcut: String?) {}
+    func setStopShortcut(_ shortcut: String?) {}
 }
 
 /// V1 — one persistent recording window per finished take (v2, Q28–Q32,

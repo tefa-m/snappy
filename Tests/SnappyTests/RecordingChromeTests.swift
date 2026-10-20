@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import AppKit
 import Testing
 
@@ -59,7 +60,10 @@ struct RecordingStatusGlyphTests {
     @Test("Tooltip names the action and the hot key; the symbol exists")
     @MainActor
     func appearance() {
-        #expect(RecordingStatusGlyph.toolTip == "Stop recording (⇧⌘4)")
+        #expect(RecordingStatusGlyph.toolTip(stopCombo: .defaultCapture) == "Stop recording (⇧⌘4)")
+        let custom = HotKeyCombo(keyCode: UInt32(kVK_ANSI_5), carbonModifiers: UInt32(cmdKey | optionKey))
+        #expect(RecordingStatusGlyph.toolTip(stopCombo: custom) == "Stop recording (⌥⌘5)")
+        #expect(RecordingStatusGlyph.toolTip(stopCombo: nil) == "Stop recording")
         let image = RecordingStatusGlyph.image()
         #expect(image != nil)
         #expect(image?.isTemplate == false)

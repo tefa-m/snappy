@@ -89,11 +89,37 @@ Sources/Snappy/
                                  via `unregister`);
                                  `register` returns false when the system
                                  refuses a combo, and `isRegistered` means a
-                                 live Carbon hot key — tested;
+                                 live Carbon hot key — tested; a refused
+                                 registration is kept (unbound, combo
+                                 stored) for `retry`/`retryUnbound`;
+                                 `replace` acquires the new combo before
+                                 releasing the old (no rollback), the same
+                                 combo again retries, `isAvailable` probes a
+                                 combo (`.availabilityProbe`, released at
+                                 once), `setSuspended` releases every ref
+                                 while a Settings recorder waits and a
+                                 failed resume keeps the registration
+                                 (`unboundActions`) — tested;
                                  PURE `CaptureHotKeyRoute` makes ⇧⌘4
                                  context-sensitive (no session → capture ·
                                  recording → stop · rest of a session →
                                  ignored) — tested
+    GlobalHotKeys.swift          The four remappable hot keys' live side:
+                                 `set`/`reset` validate (another Snappy hot
+                                 key's combo refused), bind (capture keys via
+                                 `replace`; session keys via the coordinator
+                                 mid-session, else `isAvailable`) and only
+                                 then save + `onChange` (menu, Stop tooltips,
+                                 Settings fields; also on a layout change);
+                                 the stored combo again = retry; `isLive` /
+                                 `onStatusChange` for the fields' "taken"
+                                 line; `HotKeyRebinding` seam — tested with
+                                 a fake
+    KeyLegend.swift              A key code's label on the current keyboard
+                                 layout (TIS + UCKeyTranslate, main thread
+                                 only, cached until the layout changes),
+                                 PURE US fallback + typed-character rule —
+                                 tested
   Panel/
     PanelGeometry.swift          PURE panel placement/clamping math — unit-tested
     PreviewPanelController.swift Post-capture floating panel (Edit·Copy·Save·OCR·Pin·
@@ -170,25 +196,34 @@ Sources/Snappy/
                                  recording options, the window-parts
                                  "Accessibility prompted once" flag)
     SettingsFormatting.swift     PURE settings helpers — tested:
-                                 HotKeyCombo.displayString, SettingsKeyCommand
+                                 HotKeyCombo.displayString(keyName:) /
+                                 menuKeyEquivalent(keyName:), the one
+                                 ⌘/⌃/⌥ recorder rule, SettingsKeyCommand
                                  (⌘W/X/C/V/A), SaveFolderValidation (only an
                                  existing local directory — the path control
                                  accepts drops), CanvasPaddingInput,
                                  RecordingSettingsText, ReservedHotKey,
-                                 HotKeyRecorderInput (draw-mode / Magic Pen
-                                 recorders: ⌃/⌥ required, letters/digits,
-                                 Snappy's own hot keys refused),
-                                 RecordingHotKey (the two recorders: names,
-                                 defaults, each reserves the other's combo),
+                                 HotKeyRecorderInput (shortcut recorders:
+                                 one rule for all four — at least one of
+                                 ⌘/⌃/⌥ — letters/digits, Snappy's own hot
+                                 keys refused, `.unavailable` when the
+                                 system refuses), SnappyHotKey (the four
+                                 remappable hot keys: names, defaults,
+                                 actions, each reserves the other three),
+                                 HotKeyBindings (all four combos; conflict,
+                                 resetRejection), menuKeyEquivalent,
                                  SettingsPaneFit (clamp + scroll
                                  when the pane is taller than the screen)
     SettingsWindowController.swift  Single-pane "Snappy Settings": pop-up path
-                                 control, shortcuts + Open Keyboard Settings,
+                                 control, Capture area / Capture screen
+                                 shortcut fields + Open Keyboard Settings,
                                  cursor checkbox, padding stepper + field,
                                  Recording section (RecordingSettingsSection,
                                  tab-ready, incl. the Window parts
                                  Accessibility status row + Open System
-                                 Settings…) + HotKeyRecorderButton; the pane
+                                 Settings…) + HotKeyField (recorder + Reset +
+                                 feedback hint, through GlobalHotKeys) +
+                                 HotKeyRecorderButton; the pane
                                  is a scroll view's document; private
                                  SettingsWindow routes ⌘-shortcuts and hands
                                  key equivalents to a recording recorder first
@@ -773,6 +808,45 @@ is still a transparent `NSWindow`.
   `@MainActor`-isolated static. `register` unregisters an action's existing
   Carbon ref first, and an `isolated deinit` unregisters every ref and removes
   the handler (which holds an unretained pointer to the center).
+- **Remapping goes through `GlobalHotKeys`, never straight to `SettingsStore`**
+  (2026-10-20). A combo is saved only after it was bound: `replace` acquires
+  the new combo **before** releasing the old one (Carbon allows two refs under
+  one `EventHotKeyID`), so a refusal leaves the old binding untouched and
+  there is no rollback that could itself fail; session keys are rebound by
+  `RecordingCoordinator.rebindSessionHotKey` mid-session (or probed with
+  `isAvailable` outside one), so the store never holds a combo that doesn't
+  work and a refusal leaves the old one live. The availability probe uses its
+  own `HotKeyAction.availabilityProbe` id (never left registered) — still the
+  one center and handler. While a Settings recorder waits for a key the center
+  is **suspended** (every Carbon ref released, registrations kept): otherwise
+  Carbon would swallow ⇧⌘4 and start a capture instead of the recorder
+  refusing it. An accepted combo is bound **while still suspended** — a
+  suspended `replace` / `retry` is the real bind — and only then do the rest
+  resume, so the answer is never a guess. **Recording always ends**, however
+  the window goes: `SettingsWindow` cancels it in `close()` (which keeps the
+  first responder and never calls `resignFirstResponder`), `resignKey()`, on
+  `NSApplication.didResignActiveNotification`, with `windowWillClose` as a
+  backstop — otherwise every hot key would stay paused for the session.
+  **A registration is never silently dropped:** one the system refuses (at
+  launch, or on resume because another app took the combo during the pause)
+  keeps its combo, unbound (`HotKeyCenter.unboundActions`); Settings shows
+  "That shortcut is already taken — <name> is off …" under the field
+  (`GlobalHotKeys.isLive`), Reset stays enabled, and it is retried when
+  Settings becomes key, when the app becomes active, and when the same combo
+  is recorded again. Every place that names a hot key reads the live combo
+  (menu key equivalents in `validateMenuItem`, the recording ● menu's Stop,
+  the ●'s tooltip — set on entering recording and updated by `onChange` —,
+  the toolbar's Stop tooltip via `setStopShortcut`, the Settings fields).
+- **Hot key labels follow the keyboard layout; key codes don't.** A
+  `HotKeyCombo` stores the virtual key code (the physical key — what Carbon
+  binds and what the recorder receives as `NSEvent.keyCode`). Its label comes
+  from `KeyLegend`: the current input source's layout via `UCKeyTranslate`
+  (unshifted, then shifted for AZERTY digits; ASCII letters/digits only, else
+  the US name — as macOS does on non-Latin layouts). The TIS API aborts off
+  the main thread, so only the main thread reads it (elsewhere: US). On
+  `kTISNotifySelectedKeyboardInputSourceChanged` the AppDelegate clears the
+  cache and `GlobalHotKeys.keyboardLayoutDidChange` re-announces all four
+  combos, so Settings, the ● tooltip and the toolbar re-label.
 
 ### Annotation editor (M4–M6)
 
@@ -1161,15 +1235,18 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
 - **⇧⌘4 is context-sensitive** (`CaptureHotKeyRoute`: no session → capture ·
   recording → stop · rest of a session → ignored). The draw-mode toggle
   (⌃⌥D by default) is registered through the single `HotKeyCenter` **only
-  while a session is active**, and the combo **must include ⌃ or ⌥**
-  (Leader decision): Carbon swallows it system-wide for the whole session, so
-  a ⌘ combo would kill ⌘C/⌘V in the recorded app. **A registration the
+  while a session is active**. Like every Snappy hot key its combo needs at
+  least one of ⌘/⌃/⌥ (Creator decision 2026-10-20, replacing the 2026-10-09
+  ⌃/⌥-only rule — so ⌘D / ⌘P are allowed; a ⌘ combo is swallowed system-wide
+  for the session, which is the person's call). **A registration the
   system refuses** (another app owns the combo) is never silent: the
   coordinator posts a banner (`UserFacingText.drawModeHotKeyUnavailable`,
   beep + VoiceOver if banners are off), the chrome is told
   (`setDrawModeShortcut(nil)`) so no tooltip advertises a dead shortcut, and
   the toolbar's draw toggle still works. `HotKeyCenter.register` reports the
-  result; `isRegistered` reflects a live Carbon ref.
+  result; `isRegistered` reflects a live Carbon ref. The capture hot key's
+  combo is configurable: Stop's tooltip names it (`setStopShortcut`), and a
+  Settings change of any hot key applies to a running session at once.
 - **One session at a time, scoped and drained.** Capture and recording block
   each other (`CaptureActivity`). Every recording callback and async result
   carries its session id; a cancelled or failed session orders its windows
@@ -1522,7 +1599,7 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
 | Accessibility TCC (window parts) | A second permission besides Screen Recording, tied to the app's signature like it (the "Snappy Dev" identity keeps it across rebuilds); on an MDM-managed Mac an administrator may have to allow it. Prompted once from the first S/W snap mode (`WindowPartAccess`); Settings → Recording shows the status. A terminal-launched `swift test` inherits the terminal's grant |
 | Desktop folder TCC | First Save to ~/Desktop can trigger the "Files and Folders" permission prompt (separate from Screen Recording) |
 | `LSUIElement = true` | No Dock icon; `.accessory` policy is also set at runtime for `swift run` |
-| No main menu | AppKit routes ⌘W and ⌘X/⌘C/⌘V/⌘A through the main menu, so **any window Snappy shows must handle them itself** (Settings: `SettingsWindow` + `SettingsKeyCommand` handles ⌘W and ⌘X/C/V/A; the editor's canvas `performKeyEquivalent` handles ⌘C/⌘S/⌘P/⌘Z but **not ⌘W yet** — the editor closes with Q/Esc or the close button; the recording window handles ⌘S/⌘C/⇧⌘C/⌘W in its window's `performKeyEquivalent`; the ink view handles ⌘Z/⇧⌘Z; Settings' draw-mode recorder gets every key equivalent first while it records). The status menu's key equivalents only work while it is open |
+| No main menu | AppKit routes ⌘W and ⌘X/⌘C/⌘V/⌘A through the main menu, so **any window Snappy shows must handle them itself** (Settings: `SettingsWindow` + `SettingsKeyCommand` handles ⌘W and ⌘X/C/V/A; the editor's canvas `performKeyEquivalent` handles ⌘C/⌘S/⌘P/⌘Z but **not ⌘W yet** — the editor closes with Q/Esc or the close button; the recording window handles ⌘S/⌘C/⇧⌘C/⌘W in its window's `performKeyEquivalent`; the ink view handles ⌘Z/⇧⌘Z; a Settings shortcut recorder gets every key equivalent first while it records). The status menu's key equivalents only work while it is open |
 | User-facing copy | Alert and banner strings live in `UserFacingText` (HIG: alert titles are full sentences, banner titles title-style). An unknown error contributes a description only when one was *written* (`LocalizedError.errorDescription`, `NSLocalizedDescriptionKey`, or a Cocoa error) — an Apple domain alone still synthesizes "(… error -3812.)" |
 | UserNotifications needs a bundle | `UNUserNotificationCenter.current()` **crashes** in an unbundled process (`swift run`) — `UserNotifier` guards on `Bundle.main.bundleIdentifier` and falls back to `NSLog`. Banners for the frontmost app are suppressed by default, so `UserNotifier` is the center's delegate and returns `.banner` from `willPresent`. Permission is requested on first post (first OCR) |
 | Version is derived, never hardcoded | `scripts/version.sh` (sourced by `bundle.sh`, `verify-bundle.sh`, `install.sh`) derives the version from `git describe` on `v*.*.*` tags: `CFBundleShortVersionString` = tag number only, `CFBundleVersion` = commit count, `SnappyBuildDescription` = full string (`1.1.0-7-gabc1234-dirty`). No tag → `0.0.0-<hash>`, never a build failure. Releases only via `scripts/release.sh`. Details: `features/versioning.md` |

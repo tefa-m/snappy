@@ -136,6 +136,21 @@ struct RecordingToolbarTests {
         ])
     }
 
+    @Test("Stop advertises the configured Capture Area hot key, only while recording")
+    func stopShortcutFollowsCaptureHotKey() {
+        let stop = RecordingToolbarItem.stop
+        #expect(stop.shortcut(drawModeKey: drawKey, stopKey: "⌥⌘5") == "⌥⌘5")
+        #expect(stop.toolTip(drawModeKey: drawKey, stopKey: "⌥⌘5", phase: .recording(.interact))
+            == "Stop recording and preview it (⌥⌘5)")
+        #expect(stop.toolTip(drawModeKey: drawKey, stopKey: "⌥⌘5", phase: .setup(.pointer))
+            == "Stop recording and preview it")
+        #expect(stop.toolTip(drawModeKey: drawKey, phase: .recording(.interact))
+            == "Stop recording and preview it (⇧⌘4)", "the default")
+        #expect(stop.key(drawModeKey: drawKey, stopKey: nil, phase: .recording(.interact)) == nil)
+        #expect(stop.toolTip(drawModeKey: drawKey, stopKey: nil, phase: .recording(.interact))
+            == "Stop recording and preview it", "a Capture Area combo that isn't live is not advertised")
+    }
+
     @Test("Magic Pen: named and drawn as a wand, ⌃⌥P advertised only while recording and only when registered")
     func magicPenItem() {
         let item = RecordingToolbarItem.magicPen

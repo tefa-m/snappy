@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Testing
 
 @testable import Snappy
@@ -43,18 +44,30 @@ struct StatusMenuCommandTests {
         }
     }
 
-    @Test("Key equivalents unchanged: ⇧⌘4, none, ⇧⌘3, ⌘, and ⌘Q")
+    @Test("Key equivalents: the default ⇧⌘4 and ⇧⌘3, none, ⌘, and ⌘Q")
     func keyEquivalents() {
-        #expect(StatusMenuCommand.captureArea.keyEquivalent.key == "4")
-        #expect(StatusMenuCommand.captureArea.keyEquivalent.modifiers == [.command, .shift])
-        #expect(StatusMenuCommand.captureWindow.keyEquivalent.key == "")
-        #expect(StatusMenuCommand.captureEntireScreen.keyEquivalent.key == "3")
-        #expect(StatusMenuCommand.captureEntireScreen.keyEquivalent.modifiers == [.command, .shift])
-        #expect(StatusMenuCommand.recordArea.keyEquivalent.key == "")
-        #expect(StatusMenuCommand.reopenLastRecording.keyEquivalent.key == "")
-        #expect(StatusMenuCommand.magicPenThickness.keyEquivalent.key == "")
-        #expect(StatusMenuCommand.settings.keyEquivalent.key == ",")
-        #expect(StatusMenuCommand.quit.keyEquivalent.key == "q")
+        #expect(StatusMenuCommand.captureArea.keyEquivalent().key == "4")
+        #expect(StatusMenuCommand.captureArea.keyEquivalent().modifiers == [.command, .shift])
+        #expect(StatusMenuCommand.captureWindow.keyEquivalent().key == "")
+        #expect(StatusMenuCommand.captureEntireScreen.keyEquivalent().key == "3")
+        #expect(StatusMenuCommand.captureEntireScreen.keyEquivalent().modifiers == [.command, .shift])
+        #expect(StatusMenuCommand.recordArea.keyEquivalent().key == "")
+        #expect(StatusMenuCommand.reopenLastRecording.keyEquivalent().key == "")
+        #expect(StatusMenuCommand.magicPenThickness.keyEquivalent().key == "")
+        #expect(StatusMenuCommand.settings.keyEquivalent().key == ",")
+        #expect(StatusMenuCommand.quit.keyEquivalent().key == "q")
+    }
+
+    @Test("The capture items show the configured hot keys")
+    func keyEquivalentsFollowBindings() {
+        var bindings = HotKeyBindings.defaults
+        bindings.captureArea = HotKeyCombo(keyCode: UInt32(kVK_ANSI_A), carbonModifiers: UInt32(controlKey | optionKey))
+        bindings.captureFullscreen = HotKeyCombo(keyCode: UInt32(kVK_ANSI_9), carbonModifiers: UInt32(cmdKey))
+        #expect(StatusMenuCommand.captureArea.keyEquivalent(in: bindings).key == "a")
+        #expect(StatusMenuCommand.captureArea.keyEquivalent(in: bindings).modifiers == [.control, .option])
+        #expect(StatusMenuCommand.captureEntireScreen.keyEquivalent(in: bindings).key == "9")
+        #expect(StatusMenuCommand.captureEntireScreen.keyEquivalent(in: bindings).modifiers == [.command])
+        #expect(StatusMenuCommand.settings.keyEquivalent(in: bindings).key == ",")
     }
 }
 
