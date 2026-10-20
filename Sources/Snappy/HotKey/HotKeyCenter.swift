@@ -13,6 +13,9 @@ enum HotKeyAction: UInt32, CaseIterable {
     case toggleDrawMode = 3
     /// ⌃⌥P by default. Session-only like `toggleDrawMode` (Magic Pen).
     case toggleMagicPen = 4
+    /// Never stays registered: `isAvailable` binds a combo under this id and
+    /// releases it at once, to learn whether the system would accept it.
+    case availabilityProbe = 5
 }
 
 /// Where ⇧⌘4 goes — PURE, tested. The capture hot key is context-sensitive
@@ -47,10 +50,14 @@ enum CaptureHotKeyRoute: Equatable {
 final class HotKeyCenter {
     private struct Registration {
         var ref: EventHotKeyRef?
+        var combo: HotKeyCombo
         let handler: @MainActor () -> Void
     }
 
     private var registrations: [UInt32: Registration] = [:]
+    /// While true every Carbon ref is released (the registrations stay) —
+    /// see `setSuspended`.
+    private(set) var isSuspended = false
     private var eventHandlerRef: EventHandlerRef?
 
     /// Not `private static` on purpose: the C callback is nonisolated and
@@ -79,7 +86,8 @@ final class HotKeyCenter {
         if let existing = registrations[action.rawValue]?.ref {
             UnregisterEventHotKey(existing)
         }
-        registrations[action.rawValue] = Registration(ref: nil, handler: handler)
+        registrations[action.rawValue] = Registration(ref: nil, combo: combo, handler: handler)
+        if isSuspended { return true } // bound by `setSuspended(false)`
         guard bind(action, to: combo) else {
             registrations[action.rawValue] = nil
             return false
@@ -101,15 +109,72 @@ final class HotKeyCenter {
         registrations[action.rawValue]?.ref != nil
     }
 
-    /// Rebinds an already-registered action (for a future settings UI).
-    func replace(_ action: HotKeyAction, with combo: HotKeyCombo) {
-        guard var registration = registrations[action.rawValue] else { return }
+    /// The combo an action is registered with, live or suspended.
+    func combo(for action: HotKeyAction) -> HotKeyCombo? {
+        registrations[action.rawValue]?.combo
+    }
+
+    /// Rebinds an already-registered action to `combo` (Settings → Shortcuts).
+    /// Returns false when the system refuses it — the action then keeps its
+    /// old combo, re-registered — or when the action isn't registered.
+    @discardableResult
+    func replace(_ action: HotKeyAction, with combo: HotKeyCombo) -> Bool {
+        guard var registration = registrations[action.rawValue] else { return false }
+        guard registration.combo != combo else { return true }
+        if isSuspended {
+            // Nothing is live; the probe stands in for the bind.
+            guard isAvailable(combo) else { return false }
+            registration.combo = combo
+            registrations[action.rawValue] = registration
+            return true
+        }
+        let old = registration.combo
         if let ref = registration.ref {
             UnregisterEventHotKey(ref)
             registration.ref = nil
-            registrations[action.rawValue] = registration
         }
-        bind(action, to: combo)
+        registration.combo = combo
+        registrations[action.rawValue] = registration
+        guard bind(action, to: combo) else {
+            registrations[action.rawValue]?.combo = old
+            bind(action, to: old)
+            return false
+        }
+        return true
+    }
+
+    /// True when the system would register `combo` now — bound under
+    /// `.availabilityProbe` and released at once. A combo one of Snappy's own
+    /// live bindings holds reads as unavailable (the recorders refuse those
+    /// before asking).
+    func isAvailable(_ combo: HotKeyCombo) -> Bool {
+        let hotKeyID = EventHotKeyID(signature: Self.signature, id: HotKeyAction.availabilityProbe.rawValue)
+        var ref: EventHotKeyRef?
+        let status = RegisterEventHotKey(
+            combo.keyCode, combo.carbonModifiers, hotKeyID, GetEventDispatcherTarget(), 0, &ref
+        )
+        guard status == noErr else { return false }
+        if let ref { UnregisterEventHotKey(ref) }
+        return true
+    }
+
+    /// Suspended, no binding swallows its combo, so a Settings recorder can
+    /// receive Snappy's own hot keys as ordinary key presses (and refuse
+    /// them) instead of ⇧⌘4 starting a capture. Resuming re-binds every
+    /// registration; one the system now refuses is dropped, as `register`
+    /// would.
+    func setSuspended(_ suspended: Bool) {
+        guard suspended != isSuspended else { return }
+        isSuspended = suspended
+        for (id, registration) in registrations {
+            guard let action = HotKeyAction(rawValue: id) else { continue }
+            if suspended {
+                if let ref = registration.ref { UnregisterEventHotKey(ref) }
+                registrations[id]?.ref = nil
+            } else if !bind(action, to: registration.combo) {
+                registrations[id] = nil
+            }
+        }
     }
 
     @discardableResult
