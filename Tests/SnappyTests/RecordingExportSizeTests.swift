@@ -471,6 +471,39 @@ private final class ProgressLog: @unchecked Sendable {
         }
     }
 
+    /// Review R1: four-digit sides, a long take and "Export failed" could run
+    /// past both edges — at the 440 pt minimum, and narrower than the
+    /// content (320 pt stands in for a larger text size).
+    @Test func theCapsuleStaysReadableAtTheMinimumWindowWidth() async throws {
+        try await withStore { settings, _ in
+            let take = try await RecordingTranscoderTests.makeTake()
+            defer { try? FileManager.default.removeItem(at: take) }
+            let window = makeWindow(take: take, settings: settings, savedFiles: RecordingSavedFiles())
+            defer { window.close() }
+            window.show()
+            await settle { !window.statusInfoText.isEmpty }
+            let long = RecordingVideoInfo(size: CGSize(width: 4096, height: 4096), duration: 3723, framesPerSecond: 60)
+            for (failed, width) in [(false, RecordingWindowLayout.minWindowSize.width), (true, 440), (true, 320)] {
+                window.showStatusForTesting(long, failed: failed)
+                window.resizeForTesting(width: width)
+                let narrow = window.statusLabelsFitForTesting()
+                let size = failed ? ExportSizeText.failure : window.statusSizeText
+                let scale = window.exportScaleTitleForTesting
+                let clipped = narrow.filter { !$0.fits }.map(\.text)
+                #expect(clipped.isEmpty, "clipped: \(clipped)")
+                #expect(narrow.map(\.text).contains(size), "the size always stays")
+                #expect(narrow.map(\.text).contains(scale), "the stop always stays")
+
+                window.resizeForTesting(width: 900)
+                let wide = window.statusLabelsFitForTesting()
+                let clippedWide = wide.filter { !$0.fits }.map(\.text)
+                #expect(clippedWide.isEmpty, "clipped: \(clippedWide)")
+                let info = window.statusInfoText
+                #expect(wide.map(\.text).contains(info), "room again: the readout is back")
+            }
+        }
+    }
+
     @Test func aFailedReEncodeExportsNothingAndSaysSoInline() async throws {
         try await withStore { settings, folder in
             let take = FileManager.default.temporaryDirectory.appending(path: "SnappyBrokenTake-\(UUID().uuidString).mp4")

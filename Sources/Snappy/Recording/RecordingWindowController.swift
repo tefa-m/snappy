@@ -68,6 +68,8 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
     /// The last re-encode failed — shown in place of the size until the stop
     /// changes or the next export starts.
     private var exportFailure: ExportScale?
+    /// The capsule's stack, for its narrow-window behaviour (test hook).
+    private var statusStack: NSStackView?
     private var loadTask: Task<Void, Never>?
     private let loadVideoInfo: @Sendable (URL) async -> RecordingVideoInfo
     /// Set once the window is on screen.
@@ -333,6 +335,13 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
         stack.spacing = 6
         stack.setCustomSpacing(2, after: scaleSlider)
         stack.translatesAutoresizingMaskIntoConstraints = false
+        // Too narrow for everything (four-digit sides, a long take, "Export
+        // failed" at the 440 pt minimum): the dimensions · duration readout
+        // goes first — the title still names the take's size — so the
+        // slider and the size always stay whole.
+        stack.setVisibilityPriority(.detachOnlyIfNecessary, for: infoLabel)
+        stack.setVisibilityPriority(.detachOnlyIfNecessary, for: infoSeparator)
+        statusStack = stack
 
         let glass = NSGlassEffectView()
         glass.cornerRadius = RecordingWindowLayout.statusCapsuleHeight / 2
@@ -355,6 +364,8 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
             inner.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
             glass.heightAnchor.constraint(equalToConstant: RecordingWindowLayout.statusCapsuleHeight),
             glass.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            glass.leadingAnchor.constraint(greaterThanOrEqualTo: container.leadingAnchor, constant: 10),
+            glass.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -10),
             glass.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
         ])
     }
@@ -416,6 +427,35 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
     // Test hooks: the capsule's readouts.
     var statusInfoText: String { infoLabel.stringValue }
     var statusSizeText: String { sizeLabel.stringValue }
+    var exportScaleTitleForTesting: String { scaleLabel.stringValue }
+
+    /// Test hook: shows `info` (and a failed re-encode at the current stop)
+    /// without reading a take.
+    func showStatusForTesting(_ info: RecordingVideoInfo, failed: Bool) {
+        apply(info)
+        exportFailure = failed ? exportScale : nil
+        refreshStatus()
+    }
+
+    /// Test hook: the window at `width` points — even below its minimum
+    /// (content wider than the window, e.g. at a larger text size).
+    func resizeForTesting(width: CGFloat) {
+        var frame = window.frame
+        frame.size.width = width
+        window.setFrame(frame, display: false)
+    }
+
+    /// Test hook: the capsule's labels that are on screen, each with whether
+    /// it shows its whole text inside the window's content.
+    func statusLabelsFitForTesting() -> [(text: String, fits: Bool)] {
+        window.contentView?.layoutSubtreeIfNeeded()
+        guard let stack = statusStack, let content = window.contentView else { return [] }
+        return [infoLabel, scaleLabel, sizeLabel].filter { stack.views.contains($0) && !$0.isHidden }.map { label in
+            let frame = label.convert(label.bounds, to: content)
+            let whole = frame.width + 0.5 >= ceil(label.intrinsicContentSize.width)
+            return (label.stringValue, whole && content.bounds.contains(frame))
+        }
+    }
 
     private var saveFolderName: String {
         FileManager.default.displayName(atPath: settings.saveDirectory.path)
