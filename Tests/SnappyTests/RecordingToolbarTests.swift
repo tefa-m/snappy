@@ -11,10 +11,11 @@ struct RecordingToolbarTests {
 
     // MARK: - Items
 
-    @Test("Groups follow the design: Record·timer | tools | style | Clear·toggle·Magic Pen | Cancel")
+    @Test("Groups follow the design: Record·timer | Area·Window | tools | style | Clear·toggle·Magic Pen | Cancel")
     func groups() {
         #expect(RecordingToolbarItem.groups == [
             [.record],
+            [.area, .window],
             [.pointer, .pen, .highlighter, .arrow, .oval, .box],
             [.color, .width, .fading],
             [.clear, .drawMode, .magicPen],
@@ -23,7 +24,7 @@ struct RecordingToolbarTests {
         // Every item has a place; Stop shares Record's slot.
         let placed = Set(RecordingToolbarItem.groups.joined()).union([.stop])
         #expect(placed == Set(RecordingToolbarItem.allCases))
-        #expect(RecordingToolbarItem.toolItems == RecordingToolbarItem.groups[1])
+        #expect(RecordingToolbarItem.toolItems == RecordingToolbarItem.groups[2])
     }
 
     @Test("The five tool buttons are the five ink tools, in order")
@@ -46,14 +47,69 @@ struct RecordingToolbarTests {
         #expect(RecordingToolbarItem.drawMode.command == .toggleDrawMode)
         #expect(RecordingToolbarItem.magicPen.command == .toggleMagicPen)
         #expect(RecordingToolbarItem.cancel.command == .cancel)
+        #expect(RecordingToolbarItem.area.command == .snap(.area))
+        #expect(RecordingToolbarItem.window.command == .snap(.window))
         #expect(RecordingToolbarItem.color.command == nil)
         #expect(RecordingToolbarItem.width.command == nil)
+    }
+
+    @Test("Area / Window: S / W's snap; the mode already on steps back, the other one switches")
+    func snapCommands() {
+        let target = RecordingToolbarStateTests.target
+        #expect(RecordingToolbarItem.area.snapKind == .area)
+        #expect(RecordingToolbarItem.window.snapKind == .window)
+        #expect(RecordingToolbarItem.allCases.filter { $0.snapKind != nil } == [.area, .window])
+        for phase: RecordingPhase in [.setup(.pointer), .setup(.tool(.pen))] {
+            #expect(RecordingToolbarItem.area.command(phase: phase) == .snap(.area))
+            #expect(RecordingToolbarItem.window.command(phase: phase) == .snap(.window))
+        }
+        let snapArea = RecordingPhase.snapping(.area, previous: target, returnTo: .pointer)
+        #expect(RecordingToolbarItem.area.command(phase: snapArea) == .stepBack)
+        #expect(RecordingToolbarItem.window.command(phase: snapArea) == .snap(.window))
+        let snapWindow = RecordingPhase.snapping(.window, previous: target, returnTo: .pointer)
+        #expect(RecordingToolbarItem.window.command(phase: snapWindow) == .stepBack)
+        #expect(RecordingToolbarItem.area.command(phase: snapWindow) == .snap(.area))
+        // Every other item sends the same command in every phase.
+        for phase in RecordingToolbarStateTests.phases.map(\.phase) {
+            for item in RecordingToolbarItem.allCases where item.snapKind == nil {
+                #expect(item.command(phase: phase) == item.command, "\(item) in \(phase)")
+            }
+        }
+    }
+
+    @Test("Area / Window: the active one returns to Pointer and restores the previous area, like Esc")
+    func snapClickStepsBack() {
+        var session = RecordingSession(target: RecordingToolbarStateTests.target, countdownSeconds: 3)
+        session.handle(.command(RecordingToolbarItem.window.command(phase: session.phase)!))
+        #expect(session.phase == .snapping(.window, previous: RecordingToolbarStateTests.target, returnTo: .pointer))
+        let hovered = RecordingTarget.area(globalRect: CGRect(x: 50, y: 50, width: 200, height: 100), displayID: 1)
+        session.handle(.targetChanged(hovered))
+        session.handle(.command(RecordingToolbarItem.area.command(phase: session.phase)!))
+        #expect(session.phase == .snapping(.area, previous: RecordingToolbarStateTests.target, returnTo: .pointer))
+        session.handle(.command(RecordingToolbarItem.area.command(phase: session.phase)!))
+        #expect(session.phase == .setup(.pointer))
+        #expect(session.target == RecordingToolbarStateTests.target)
+    }
+
+    @Test("Area / Window tooltips: S / W in Setup and snap mode only")
+    func snapTooltips() {
+        let target = RecordingToolbarStateTests.target
+        #expect(RecordingToolbarItem.area.toolTip(drawModeKey: drawKey, phase: .setup(.pointer)) == "Snap to a window's area (S)")
+        #expect(RecordingToolbarItem.window.toolTip(drawModeKey: drawKey, phase: .setup(.tool(.box))) == "Snap to a window (W)")
+        let snapWindow = RecordingPhase.snapping(.window, previous: target, returnTo: .pointer)
+        #expect(RecordingToolbarItem.window.toolTip(drawModeKey: drawKey, phase: snapWindow)
+            == "Stop snapping and restore the previous area (W)")
+        #expect(RecordingToolbarItem.area.toolTip(drawModeKey: drawKey, phase: snapWindow) == "Snap to a window's area (S)")
+        for phase: RecordingPhase in [.countdown(remaining: 2), .recording(.interact), .recording(.draw(.pen)), .stopping] {
+            #expect(RecordingToolbarItem.area.toolTip(drawModeKey: drawKey, phase: phase) == "Snap to a window's area")
+            #expect(RecordingToolbarItem.window.toolTip(drawModeKey: drawKey, phase: phase) == "Snap to a window")
+        }
     }
 
     @Test("Shortcuts: the key map's bindings and the three hot keys")
     func shortcuts() {
         #expect(RecordingToolbarItem.allCases.map { $0.shortcut(drawModeKey: drawKey, magicPenKey: magicKey) } == [
-            "R", "⇧⌘4", "V", "P", "H", "A", "O", "B", "1–5", "[ or ]", "F", "⌫", "⌃⌥D", "⌃⌥P", "Esc",
+            "R", "⇧⌘4", "S", "W", "V", "P", "H", "A", "O", "B", "1–5", "[ or ]", "F", "⌫", "⌃⌥D", "⌃⌥P", "Esc",
         ])
     }
 
@@ -160,7 +216,7 @@ struct RecordingToolbarTests {
             let choices = [width.thinner, width.thicker]
             if case .recording(.magicPen) = phase { return choices.map { [.ink(.magicPenWidth($0))] } }
             return choices.map { RecordingToolbarItem.widthCommands(from: width, to: $0).map { .ink($0) } }
-        default: return [[item.command!]]
+        default: return [[item.command(phase: phase)!]]
         }
     }
 
@@ -281,6 +337,7 @@ struct RecordingToolbarStateTests {
         session([]),                                                          // setup pointer
         session([.command(.tool(.arrow))]),                                   // setup tool
         session([.command(.snap(.window))]),                                  // snapping
+        session([.command(.tool(.oval)), .command(.snap(.area))]),            // snapping (area, from a tool)
         session([.command(.record)]),                                         // countdown
         session([.command(.record)], countdown: 0),                           // recording interact
         session([.command(.record), .command(.toggleDrawMode)], countdown: 0), // draw (pen)
@@ -290,12 +347,13 @@ struct RecordingToolbarStateTests {
         session([.command(.record), .command(.stop)], countdown: 0),          // stopping
     ]
 
-    /// What a click on `item` sends (Color/Width: a representative menu choice).
-    private static func command(for item: RecordingToolbarItem) -> RecordingCommand {
+    /// What a click on `item` sends in `phase` (Color/Width: a representative
+    /// menu choice).
+    private static func command(for item: RecordingToolbarItem, phase: RecordingPhase) -> RecordingCommand {
         switch item {
         case .color: .ink(.color(.blue))
         case .width: .ink(.thicker)
-        default: item.command!
+        default: item.command(phase: phase)!
         }
     }
 
@@ -303,6 +361,7 @@ struct RecordingToolbarStateTests {
     func enabledMatchesSession() {
         #expect(Self.phases.map(\.phase) == [
             .setup(.pointer), .setup(.tool(.arrow)), .snapping(.window, previous: Self.target, returnTo: .pointer),
+            .snapping(.area, previous: Self.target, returnTo: .tool(.oval)),
             .countdown(remaining: 3), .recording(.interact), .recording(.draw(.pen)), .recording(.draw(.box)),
             .recording(.magicPen(resume: nil)), .recording(.magicPen(resume: .oval)), .stopping,
         ])
@@ -310,7 +369,7 @@ struct RecordingToolbarStateTests {
             let state = RecordingToolbarState(phase: session.phase)
             for item in RecordingToolbarItem.allCases where item != state.selected {
                 var probe = session
-                let acted = probe.handle(.command(Self.command(for: item))) != .ignored
+                let acted = probe.handle(.command(Self.command(for: item, phase: session.phase))) != .ignored
                 #expect(state.isEnabled(item) == acted, "\(item) in \(session.phase)")
             }
             // The selected tool stays enabled (a click on it is a harmless no-op)
@@ -361,6 +420,34 @@ struct RecordingToolbarStateTests {
         for phase: RecordingPhase in [.setup(.pointer), .countdown(remaining: 1), .stopping] {
             #expect(!RecordingToolbarState(phase: phase).isEnabled(.magicPen), "\(phase)")
         }
+    }
+
+    @Test("Area / Window: enabled in Setup and snap mode, on for the active snap mode, dimmed — never hidden — later")
+    func snapState() {
+        let target = Self.target
+        for phase: RecordingPhase in [.setup(.pointer), .setup(.tool(.arrow))] {
+            let state = RecordingToolbarState(phase: phase)
+            #expect(state.isEnabled(.area) && state.isEnabled(.window), "\(phase)")
+            #expect(state.snapping == nil)
+        }
+        for kind: SnapKind in [.area, .window] {
+            let state = RecordingToolbarState(phase: .snapping(kind, previous: target, returnTo: .tool(.oval)))
+            #expect(state.snapping == kind)
+            #expect(state.isEnabled(.area) && state.isEnabled(.window) && state.isEnabled(.cancel))
+            #expect(!state.isEnabled(.record))
+            #expect(state.selected == .oval, "the tool picker keeps the mode it returns to")
+        }
+        for phase: RecordingPhase in [
+            .countdown(remaining: 1), .recording(.interact), .recording(.draw(.pen)),
+            .recording(.magicPen(resume: nil)), .stopping,
+        ] {
+            let state = RecordingToolbarState(phase: phase)
+            #expect(!state.isEnabled(.area) && !state.isEnabled(.window), "\(phase)")
+            #expect(state.snapping == nil)
+        }
+        // Still laid out in every phase: the groups are fixed.
+        #expect(RecordingToolbarItem.groups.joined().contains(.area))
+        #expect(RecordingToolbarItem.groups.joined().contains(.window))
     }
 
     @Test("The state keeps its phase for the tooltips")
