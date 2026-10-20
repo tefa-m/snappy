@@ -418,6 +418,7 @@ final class RecordingSettingsSection: NSObject {
     private let countdownPopUp = NSPopUpButton()
     private let frameRatePopUp = NSPopUpButton()
     private let qualityPopUp = NSPopUpButton()
+    private let exportScalePopUp = NSPopUpButton()
     private let cursorCheckbox = NSButton(checkboxWithTitle: "Pointer", target: nil, action: nil)
     private let clicksCheckbox = NSButton(checkboxWithTitle: "Click ripples", target: nil, action: nil)
     private let colorPopUp = NSPopUpButton()
@@ -475,16 +476,20 @@ final class RecordingSettingsSection: NSObject {
         Self.fill(countdownPopUp, RecordingCountdown.allCases, title: RecordingSettingsText.countdown)
         Self.fill(frameRatePopUp, RecordingFrameRate.allCases, title: RecordingSettingsText.frameRate)
         Self.fill(qualityPopUp, RecordingQuality.allCases, title: RecordingSettingsText.quality)
+        Self.fill(exportScalePopUp, Array(ExportScale.allCases.reversed()), title: \.title)
         Self.fill(colorPopUp, InkColorPreset.allCases, title: \.title, image: Self.swatch)
         Self.fill(widthPopUp, InkWidth.allCases, title: \.title, image: Self.lineSample)
         Self.fill(magicPenWidthPopUp, InkWidth.allCases, title: \.title, image: Self.magicPenLineSample)
         countdownPopUp.setAccessibilityLabel("Countdown")
         frameRatePopUp.setAccessibilityLabel("Frame rate")
         qualityPopUp.setAccessibilityLabel("Video quality")
+        exportScalePopUp.setAccessibilityLabel("Default export size")
         colorPopUp.setAccessibilityLabel("Ink color")
         widthPopUp.setAccessibilityLabel("Line width")
         magicPenWidthPopUp.setAccessibilityLabel("Magic Pen thickness")
-        for popUp in [countdownPopUp, frameRatePopUp, qualityPopUp, colorPopUp, widthPopUp, magicPenWidthPopUp] {
+        for popUp in [
+            countdownPopUp, frameRatePopUp, qualityPopUp, exportScalePopUp, colorPopUp, widthPopUp, magicPenWidthPopUp,
+        ] {
             popUp.target = self
             popUp.action = #selector(popUpChanged(_:))
         }
@@ -524,7 +529,7 @@ final class RecordingSettingsSection: NSObject {
 
         // ≥ 28 pt controls (Design decision, see the padding stepper above).
         for control in [
-            countdownPopUp, frameRatePopUp, qualityPopUp, cursorCheckbox, clicksCheckbox,
+            countdownPopUp, frameRatePopUp, qualityPopUp, exportScalePopUp, cursorCheckbox, clicksCheckbox,
             colorPopUp, widthPopUp, fadingCheckbox, fadeDelayStepper, magicPenWidthPopUp, partsSettingsButton,
         ] as [NSControl] {
             control.controlSize = .large
@@ -552,6 +557,7 @@ final class RecordingSettingsSection: NSObject {
         grid.addRow(with: [NSTextField(labelWithString: "Countdown:"), countdownPopUp])
         grid.addRow(with: [NSTextField(labelWithString: "Frame rate:"), frameRatePopUp])
         grid.addRow(with: [NSTextField(labelWithString: "Quality:"), qualityPopUp])
+        grid.addRow(with: [NSTextField(labelWithString: "Default export size:"), exportScalePopUp])
         grid.addRow(with: [NSTextField(labelWithString: "Show in video:"), cursorCheckbox])
         grid.addRow(with: [empty, clicksCheckbox])
         // Ink
@@ -582,24 +588,27 @@ final class RecordingSettingsSection: NSObject {
         // The 28 pt checkboxes draw their box and title centred, which the
         // grid's first-baseline alignment doesn't know — centre those rows so
         // the labels line up with the titles.
-        for offset in [5, 6, 8] {
+        for offset in [6, 7, 9] {
             let row = grid.row(at: first + offset)
             row.rowAlignment = .none
             row.yPlacement = .center
         }
         // The status row is as tall as its 28 pt button: centre it too.
-        let partsGridRow = grid.row(at: first + 16)
+        let partsGridRow = grid.row(at: first + 17)
         partsGridRow.rowAlignment = .none
         partsGridRow.yPlacement = .center
-        // Groups: video (countdown, rate, quality) | show in video | ink | draw
-        // mode | Magic Pen | window parts.
-        for offset in [5, 7, 11, 13, 16] { grid.row(at: first + offset).topPadding = 10 }
+        // Groups: video (countdown, rate, quality, export size) | show in video
+        // | ink | draw mode | Magic Pen | window parts.
+        for offset in [6, 8, 12, 14, 17] { grid.row(at: first + offset).topPadding = 10 }
     }
 
     func syncFromSettings() {
         Self.select(settings.recordingCountdown, in: countdownPopUp)
         Self.select(settings.recordingFrameRate, in: frameRatePopUp)
         Self.select(settings.recordingQuality, in: qualityPopUp)
+        if let index = Array(ExportScale.allCases.reversed()).firstIndex(of: settings.recordingExportScale) {
+            exportScalePopUp.selectItem(at: index)
+        }
         Self.select(settings.recordingDefaultColor, in: colorPopUp)
         Self.select(settings.recordingDefaultWidth, in: widthPopUp)
         Self.select(settings.recordingMagicPenWidth, in: magicPenWidthPopUp)
@@ -651,6 +660,12 @@ final class RecordingSettingsSection: NSObject {
         case countdownPopUp: Self.selection(of: sender).map { settings.recordingCountdown = $0 }
         case frameRatePopUp: Self.selection(of: sender).map { settings.recordingFrameRate = $0 }
         case qualityPopUp: Self.selection(of: sender).map { settings.recordingQuality = $0 }
+        case exportScalePopUp:
+            // Listed largest first (100 % leads, like the other defaults).
+            let stops = Array(ExportScale.allCases.reversed())
+            if stops.indices.contains(sender.indexOfSelectedItem) {
+                settings.recordingExportScale = stops[sender.indexOfSelectedItem]
+            }
         case colorPopUp: Self.selection(of: sender).map { settings.recordingDefaultColor = $0 }
         case widthPopUp: Self.selection(of: sender).map { settings.recordingDefaultWidth = $0 }
         case magicPenWidthPopUp: Self.selection(of: sender).map { setMagicPenWidth($0) }

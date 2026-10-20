@@ -68,6 +68,7 @@ struct RecordingSettingsTests {
         #expect(s.showsClicks)
         #expect(!s.fadingInkAtStart)
         #expect(s.fadeDelay == 3)
+        #expect(s.exportScale == .full)
         #expect(s.defaultColor == .red)
         #expect(s.defaultWidth == .medium)
         #expect(s.quality == .high)
@@ -124,7 +125,7 @@ struct RecordingSettingsTests {
             let custom = RecordingSettings(
                 countdown: .five, frameRate: .fps30, showsCursor: false, showsClicks: false,
                 fadingInkAtStart: true, fadeDelay: 8, defaultColor: .blue, defaultWidth: .thick,
-                quality: .standard,
+                quality: .standard, exportScale: .half,
                 drawModeHotKey: HotKeyCombo(keyCode: UInt32(kVK_ANSI_X), carbonModifiers: UInt32(cmdKey | optionKey)),
                 magicPenHotKey: HotKeyCombo(keyCode: UInt32(kVK_ANSI_M), carbonModifiers: UInt32(controlKey)),
                 magicPenWidth: .thick
@@ -136,6 +137,7 @@ struct RecordingSettingsTests {
             // Each individual accessor (T6's UI binds these) agrees.
             #expect(reread.recordingCountdown == .five)
             #expect(reread.recordingFrameRate == .fps30)
+            #expect(reread.recordingExportScale == .half)
             #expect(!reread.recordingShowsCursor)
             #expect(!reread.recordingShowsClicks)
             #expect(reread.recordingFadingInkAtStart)
@@ -181,6 +183,7 @@ struct RecordingSettingsTests {
             defaults.set(9, forKey: "recordingDefaultColor")
             defaults.set(-1, forKey: "recordingDefaultWidth")
             defaults.set("ultra", forKey: "recordingQuality")
+            defaults.set(33, forKey: "recordingExportScale")
             defaults.set(["keyCode": 2], forKey: "recordingDrawModeHotKey")
             defaults.set("big", forKey: "recordingMagicPenHotKey")
             defaults.set(3, forKey: "recordingMagicPenWidth")
