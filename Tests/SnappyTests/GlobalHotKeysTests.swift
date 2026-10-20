@@ -11,19 +11,40 @@ struct GlobalHotKeysTests {
     /// Accepts or refuses like Carbon would.
     final class Center: HotKeyRebinding {
         var taken: Set<HotKeyCombo.Key> = []
+        /// Registered combos (the two capture keys, like the app's launch).
+        var combos: [HotKeyAction: HotKeyCombo] = [.captureArea: .defaultCapture, .captureFullscreen: .defaultFullscreen]
+        /// Registered but refused by the system.
+        var unbound: Set<HotKeyAction> = []
         private(set) var replaced: [(HotKeyAction, HotKeyCombo)] = []
         private(set) var probed: [HotKeyCombo] = []
         private(set) var suspensions: [Bool] = []
+        private(set) var retries = 0
+        /// Every call, in order: "suspend", "resume", "replace", "probe".
+        private(set) var log: [String] = []
         func replace(_ action: HotKeyAction, with combo: HotKeyCombo) -> Bool {
+            log.append("replace")
             guard !taken.contains(combo.key) else { return false }
             replaced.append((action, combo))
+            combos[action] = combo
+            unbound.remove(action)
             return true
         }
         func isAvailable(_ combo: HotKeyCombo) -> Bool {
+            log.append("probe")
             probed.append(combo)
             return !taken.contains(combo.key)
         }
-        func setSuspended(_ suspended: Bool) { suspensions.append(suspended) }
+        func setSuspended(_ suspended: Bool) {
+            log.append(suspended ? "suspend" : "resume")
+            suspensions.append(suspended)
+        }
+        func isRegistered(_ action: HotKeyAction) -> Bool { combos[action] != nil && !unbound.contains(action) }
+        func combo(for action: HotKeyAction) -> HotKeyCombo? { combos[action] }
+        func retryUnbound() -> [HotKeyAction] {
+            retries += 1
+            unbound = unbound.filter { combos[$0].map { taken.contains($0.key) } ?? false }
+            return Array(unbound)
+        }
     }
 
     private let defaults: UserDefaults
@@ -71,9 +92,60 @@ struct GlobalHotKeysTests {
         #expect(settings.hotKeyBindings == .defaults)
     }
 
-    @Test func theSameComboAgainIsANoOp() {
+    @Test func theSameComboAgainIsNotSavedOrAnnounced() {
+        var changes = 0
+        hotKeys.onChange.append { _, _ in changes += 1 }
         #expect(hotKeys.set(.captureArea, to: .defaultCapture) == nil)
-        #expect(center.replaced.isEmpty)
+        #expect(changes == 0)
+        #expect(settings.hotKeyBindings == .defaults)
+    }
+
+    /// Review r1 #6: a stored combo the system refused (at launch, or after a
+    /// recorder's pause) is retried by recording it again — with the real
+    /// answer, and the fields told when it went live.
+    @Test func theStoredComboAgainRetriesItWhenItIsNotLive() {
+        center.unbound = [.captureArea]
+        center.taken = [HotKeyCombo.defaultCapture.key]
+        var statusChanges = 0
+        hotKeys.onStatusChange.append { statusChanges += 1 }
+        #expect(!hotKeys.isLive(.captureArea))
+        #expect(hotKeys.isLive(.captureFullscreen))
+        #expect(hotKeys.set(.captureArea, to: .defaultCapture) == .unavailable(.defaultCapture), "still taken")
+        #expect(hotKeys.reset(.captureArea) == .unavailable(.defaultCapture), "Reset retries the default too")
+        center.taken = []
+        #expect(hotKeys.set(.captureArea, to: .defaultCapture) == nil)
+        #expect(hotKeys.isLive(.captureArea))
+        #expect(statusChanges == 1)
+        #expect(settings.hotKeyBindings == .defaults)
+    }
+
+    @Test func aSessionHotKeyOutsideASessionReadsAsLive() {
+        #expect(hotKeys.isLive(.drawMode))
+        #expect(hotKeys.isLive(.magicPen))
+        center.combos[.toggleDrawMode] = .defaultDrawMode
+        center.unbound = [.toggleDrawMode]
+        #expect(!hotKeys.isLive(.drawMode), "a session holds it, refused")
+    }
+
+    @Test func retryingTellsTheFields() {
+        center.unbound = [.captureFullscreen]
+        var statusChanges = 0
+        hotKeys.onStatusChange.append { statusChanges += 1 }
+        hotKeys.retryUnbound()
+        #expect(center.retries == 1)
+        #expect(statusChanges == 1)
+        #expect(hotKeys.isLive(.captureFullscreen))
+    }
+
+    @Test func aLayoutChangeReannouncesEveryCombo() {
+        var changes: [SnappyHotKey] = []
+        hotKeys.onChange.append { hotKey, combo in
+            changes.append(hotKey)
+            #expect(combo == HotKeyBindings.defaults[hotKey])
+        }
+        hotKeys.keyboardLayoutDidChange()
+        #expect(changes == SnappyHotKey.allCases)
+        #expect(settings.hotKeyBindings == .defaults)
     }
 
     @Test func outsideASessionASessionHotKeyIsProbed() {
@@ -122,9 +194,13 @@ struct GlobalHotKeysTests {
     }
 
     @Test func aRecorderSuspendsTheCenterWhileItWaits() {
+        var statusChanges = 0
+        hotKeys.onStatusChange.append { statusChanges += 1 }
         hotKeys.setRecorderActive(true)
+        #expect(statusChanges == 0)
         hotKeys.setRecorderActive(false)
         #expect(center.suspensions == [true, false])
+        #expect(statusChanges == 1, "a resume may have lost a combo — the fields re-check")
     }
 
     @Test func withoutACenterCombosAreValidatedAndSaved() {

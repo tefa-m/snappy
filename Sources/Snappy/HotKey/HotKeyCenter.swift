@@ -56,7 +56,7 @@ final class HotKeyCenter {
 
     private var registrations: [UInt32: Registration] = [:]
     /// While true every Carbon ref is released (the registrations stay) —
-    /// see `setSuspended`.
+    /// see `setSuspended` — except one `replace` / `retry` bound since.
     private(set) var isSuspended = false
     private var eventHandlerRef: EventHandlerRef?
 
@@ -77,22 +77,20 @@ final class HotKeyCenter {
         if let eventHandlerRef { RemoveEventHandler(eventHandlerRef) }
     }
 
-    /// Binds `combo` to `action`. Returns false — and keeps no binding —
-    /// when the system refuses it (typically: another app already owns the
-    /// combo).
+    /// Binds `combo` to `action`. Returns false when the system refuses it
+    /// (typically: another app already owns the combo); the registration is
+    /// kept anyway, unbound (`isRegistered` false), so `retryUnbound` and
+    /// every resume try again — a refused combo is never silently forgotten.
+    /// Registered while suspended, the combo is bound at once all the same:
+    /// the answer is real, not a guess deferred to the resume.
     @discardableResult
     func register(_ action: HotKeyAction, combo: HotKeyCombo, handler: @escaping @MainActor () -> Void) -> Bool {
         // Registering an action twice must not leak the first Carbon hot key.
         if let existing = registrations[action.rawValue]?.ref {
             UnregisterEventHotKey(existing)
         }
-        registrations[action.rawValue] = Registration(ref: nil, combo: combo, handler: handler)
-        if isSuspended { return true } // bound by `setSuspended(false)`
-        guard bind(action, to: combo) else {
-            registrations[action.rawValue] = nil
-            return false
-        }
-        return true
+        registrations[action.rawValue] = Registration(ref: acquire(action, combo), combo: combo, handler: handler)
+        return isRegistered(action)
     }
 
     /// Removes a binding and its Carbon hot key, so the combo reaches other
@@ -109,38 +107,56 @@ final class HotKeyCenter {
         registrations[action.rawValue]?.ref != nil
     }
 
-    /// The combo an action is registered with, live or suspended.
+    /// The combo an action is registered with — live, suspended, or waiting
+    /// for a retry after the system refused it.
     func combo(for action: HotKeyAction) -> HotKeyCombo? {
         registrations[action.rawValue]?.combo
     }
 
-    /// Rebinds an already-registered action to `combo` (Settings → Shortcuts).
-    /// Returns false when the system refuses it — the action then keeps its
-    /// old combo, re-registered — or when the action isn't registered.
+    /// Registered actions the system currently refuses (another app took the
+    /// combo, e.g. while a Settings recorder had them released). Empty while
+    /// suspended: nothing is meant to be live then.
+    var unboundActions: [HotKeyAction] {
+        guard !isSuspended else { return [] }
+        return registrations.filter { $0.value.ref == nil }.keys.sorted().compactMap(HotKeyAction.init(rawValue:))
+    }
+
+    /// Rebinds a registered action to `combo` (Settings → Shortcuts). The new
+    /// combo is acquired **before** the old one is let go, so a refusal
+    /// leaves the old binding exactly as it was — no rollback that could
+    /// itself fail. The same combo again is a retry: bound now if it isn't
+    /// live. Also while suspended (a recorder just took a key): the answer
+    /// is the real bind, so the resume never has to guess. False when the
+    /// system refuses `combo` or the action isn't registered.
     @discardableResult
     func replace(_ action: HotKeyAction, with combo: HotKeyCombo) -> Bool {
-        guard var registration = registrations[action.rawValue] else { return false }
-        guard registration.combo != combo else { return true }
-        if isSuspended {
-            // Nothing is live; the probe stands in for the bind.
-            guard isAvailable(combo) else { return false }
-            registration.combo = combo
-            registrations[action.rawValue] = registration
-            return true
-        }
-        let old = registration.combo
-        if let ref = registration.ref {
-            UnregisterEventHotKey(ref)
-            registration.ref = nil
-        }
-        registration.combo = combo
-        registrations[action.rawValue] = registration
-        guard bind(action, to: combo) else {
-            registrations[action.rawValue]?.combo = old
-            bind(action, to: old)
-            return false
-        }
+        guard let registration = registrations[action.rawValue] else { return false }
+        guard registration.combo != combo else { return registration.ref != nil || retry(action) }
+        guard let ref = acquire(action, combo) else { return false }
+        if let old = registration.ref { UnregisterEventHotKey(old) }
+        registrations[action.rawValue]?.ref = ref
+        registrations[action.rawValue]?.combo = combo
         return true
+    }
+
+    /// Binds an action's stored combo if no live hot key backs it — also
+    /// while suspended (it is the action being recorded). True when it is
+    /// live afterwards.
+    @discardableResult
+    func retry(_ action: HotKeyAction) -> Bool {
+        guard let registration = registrations[action.rawValue] else { return false }
+        if registration.ref == nil { registrations[action.rawValue]?.ref = acquire(action, registration.combo) }
+        return isRegistered(action)
+    }
+
+    /// Tries every unbound registration again (Settings opening, the app
+    /// becoming active); a no-op while suspended. Returns what is still
+    /// unbound.
+    @discardableResult
+    func retryUnbound() -> [HotKeyAction] {
+        guard !isSuspended else { return [] }
+        for action in unboundActions { retry(action) }
+        return unboundActions
     }
 
     /// True when the system would register `combo` now — bound under
@@ -161,8 +177,11 @@ final class HotKeyCenter {
     /// Suspended, no binding swallows its combo, so a Settings recorder can
     /// receive Snappy's own hot keys as ordinary key presses (and refuse
     /// them) instead of ⇧⌘4 starting a capture. Resuming re-binds every
-    /// registration; one the system now refuses is dropped, as `register`
-    /// would.
+    /// registration that isn't live (one bound by `replace` / `retry` while
+    /// suspended already is). One the system now refuses — another app took
+    /// the combo during the pause — **keeps its registration and combo**,
+    /// unbound, and is listed by `unboundActions` for the UI to report and
+    /// `retryUnbound` to try again.
     func setSuspended(_ suspended: Bool) {
         guard suspended != isSuspended else { return }
         isSuspended = suspended
@@ -171,14 +190,16 @@ final class HotKeyCenter {
             if suspended {
                 if let ref = registration.ref { UnregisterEventHotKey(ref) }
                 registrations[id]?.ref = nil
-            } else if !bind(action, to: registration.combo) {
-                registrations[id] = nil
+            } else if registration.ref == nil {
+                registrations[id]?.ref = acquire(action, registration.combo)
             }
         }
     }
 
-    @discardableResult
-    private func bind(_ action: HotKeyAction, to combo: HotKeyCombo) -> Bool {
+    /// A Carbon hot key for `combo` under `action`'s id, or nil when the
+    /// system refuses it. Carbon allows two refs with the same id, which is
+    /// what lets `replace` hold the new combo before releasing the old.
+    private func acquire(_ action: HotKeyAction, _ combo: HotKeyCombo) -> EventHotKeyRef? {
         let hotKeyID = EventHotKeyID(signature: Self.signature, id: action.rawValue)
         var ref: EventHotKeyRef?
         let status = RegisterEventHotKey(
@@ -191,10 +212,9 @@ final class HotKeyCenter {
         )
         if status != noErr {
             NSLog("Snappy: RegisterEventHotKey failed for %u (%d)", action.rawValue, status)
-            return false
+            return nil
         }
-        registrations[action.rawValue]?.ref = ref
-        return true
+        return ref
     }
 
     fileprivate func handle(id: UInt32) {

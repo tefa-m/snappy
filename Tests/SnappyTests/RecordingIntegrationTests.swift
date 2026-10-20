@@ -78,6 +78,7 @@ struct RecordingIntegrationTests {
             handlers[action] = nil
         }
         func isRegistered(_ action: HotKeyAction) -> Bool { handlers[action] != nil }
+        func combo(for action: HotKeyAction) -> HotKeyCombo? { handlers[action] != nil ? combos[action] : nil }
         func replace(_ action: HotKeyAction, with combo: HotKeyCombo) -> Bool {
             guard handlers[action] != nil, !refusedCombos.contains(combo) else { return false }
             combos[action] = combo

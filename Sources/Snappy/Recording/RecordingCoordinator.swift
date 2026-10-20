@@ -324,7 +324,9 @@ final class RecordingCoordinator {
     /// at once, also for a hot key the system had refused at session start.
     func rebindSessionHotKey(_ hotKey: SnappyHotKey, to combo: HotKeyCombo) -> Bool? {
         guard hotKey.isSessionOnly, let chrome, session != nil, let hotKeys else { return nil }
-        let bound = if hotKeys.isRegistered(hotKey.action) {
+        // Registered (live, paused, or refused and waiting for a retry):
+        // rebind — the new combo is held before the old is let go.
+        let bound = if hotKeys.combo(for: hotKey.action) != nil {
             hotKeys.replace(hotKey.action, with: combo)
         } else {
             registerSessionHotKey(hotKey, combo: combo, session: sessionID)
@@ -342,6 +344,19 @@ final class RecordingCoordinator {
     /// tooltip names the new combo at once.
     func captureHotKeyDidChange(_ combo: HotKeyCombo) {
         chrome?.setStopShortcut(combo.displayString)
+    }
+
+    /// The keyboard layout changed, or a session hot key went live / was
+    /// lost (a resume, a retry): the open toolbar re-labels its tooltips,
+    /// advertising only a live session hot key.
+    func refreshHotKeyLabels() {
+        guard let chrome, session != nil else { return }
+        chrome.setStopShortcut(settings.captureHotKey.displayString)
+        guard let hotKeys else { return }
+        let draw = hotKeys.combo(for: .toggleDrawMode)
+        chrome.setDrawModeShortcut(hotKeys.isRegistered(.toggleDrawMode) ? draw?.displayString : nil)
+        let magic = hotKeys.combo(for: .toggleMagicPen)
+        chrome.setMagicPenShortcut(hotKeys.isRegistered(.toggleMagicPen) ? magic?.displayString : nil)
     }
 
     /// Retake (Q41): Setup opens at once on the take's target, then looks it
@@ -686,6 +701,8 @@ protocol SessionHotKeyRegistering: AnyObject {
     func unregister(_ action: HotKeyAction)
     /// True while a live binding backs the action.
     func isRegistered(_ action: HotKeyAction) -> Bool
+    /// The registered combo, live or not; nil when not registered.
+    func combo(for action: HotKeyAction) -> HotKeyCombo?
     /// Rebinds a registered action; false (old combo kept) when refused.
     func replace(_ action: HotKeyAction, with combo: HotKeyCombo) -> Bool
 }

@@ -67,13 +67,92 @@ struct HotKeyCenterTests {
         #expect(!center.isRegistered(.toggleDrawMode))
         #expect(center.combo(for: .toggleDrawMode) == combo, "the registration stays")
         #expect(center.isAvailable(combo), "released while suspended")
-        // A rebind while suspended is checked by the probe and applied on resume.
+        #expect(center.unboundActions.isEmpty, "nothing is meant to be live while suspended")
+        // A rebind while suspended is the real bind: the new combo is held at once.
         #expect(center.replace(.toggleDrawMode, with: other))
+        #expect(center.isRegistered(.toggleDrawMode))
+        #expect(!center.isAvailable(other))
         center.setSuspended(false)
         #expect(center.isRegistered(.toggleDrawMode))
         #expect(center.combo(for: .toggleDrawMode) == other)
         #expect(center.isAvailable(combo))
         #expect(!center.isAvailable(other))
         center.unregister(.toggleDrawMode)
+    }
+
+    /// Review r1 #2: another app takes the combo while a recorder has the hot
+    /// keys paused. The resume can't get it back — the registration and its
+    /// combo stay (reported by `unboundActions`), and a retry binds it once
+    /// it is free again.
+    @Test func aFailedResumeKeepsTheRegistrationAndRetriesLater() {
+        let center = HotKeyCenter()
+        var fired = 0
+        #expect(center.register(.toggleDrawMode, combo: combo) { fired += 1 })
+        center.setSuspended(true)
+        let thief = HotKeyCenter()
+        #expect(thief.register(.toggleMagicPen, combo: combo) {})
+        center.setSuspended(false)
+        #expect(!center.isRegistered(.toggleDrawMode))
+        #expect(center.combo(for: .toggleDrawMode) == combo, "not silently dropped")
+        #expect(center.unboundActions == [.toggleDrawMode])
+        #expect(center.retryUnbound() == [.toggleDrawMode], "still taken")
+        thief.unregister(.toggleMagicPen)
+        #expect(center.retryUnbound().isEmpty)
+        #expect(center.isRegistered(.toggleDrawMode))
+        #expect(!center.isAvailable(combo), "held again")
+        center.unregister(.toggleDrawMode)
+        #expect(fired == 0)
+    }
+
+    /// The old "rollback" case: a refused rebind of a registration whose own
+    /// combo was lost. Nothing is released or rolled back — the stored combo
+    /// stays, unbound, and is retried; the same combo again retries at once.
+    @Test func aRefusedRebindOfAnUnboundRegistrationKeepsItsCombo() {
+        let center = HotKeyCenter()
+        #expect(center.register(.toggleDrawMode, combo: combo) {})
+        center.setSuspended(true)
+        let thief = HotKeyCenter()
+        #expect(thief.register(.toggleDrawMode, combo: combo) {})
+        #expect(thief.register(.toggleMagicPen, combo: other) {})
+        center.setSuspended(false)
+        #expect(!center.replace(.toggleDrawMode, with: other), "the new combo is taken too")
+        #expect(center.combo(for: .toggleDrawMode) == combo)
+        #expect(!center.isRegistered(.toggleDrawMode))
+        #expect(!center.replace(.toggleDrawMode, with: combo), "the same combo again: a retry, still taken")
+        thief.unregister(.toggleDrawMode)
+        #expect(center.replace(.toggleDrawMode, with: combo), "free now: the retry binds it")
+        #expect(center.isRegistered(.toggleDrawMode))
+        thief.unregister(.toggleMagicPen)
+        center.unregister(.toggleDrawMode)
+    }
+
+    /// The new combo is acquired before the old is released: at no point is
+    /// the action without a live binding, and a refusal never touches it.
+    @Test func replaceHoldsTheNewComboBeforeReleasingTheOld() {
+        let center = HotKeyCenter()
+        #expect(center.register(.captureArea, combo: combo) {})
+        let rival = HotKeyCenter()
+        #expect(rival.register(.captureArea, combo: other) {})
+        #expect(!center.replace(.captureArea, with: other))
+        #expect(center.isRegistered(.captureArea))
+        #expect(!rival.isAvailable(combo), "the old combo was never let go")
+        rival.unregister(.captureArea)
+        #expect(center.replace(.captureArea, with: other))
+        #expect(rival.isAvailable(combo))
+        center.unregister(.captureArea)
+    }
+
+    @Test func aRefusedRegistrationIsKeptForARetry() {
+        let owner = HotKeyCenter()
+        #expect(owner.register(.toggleDrawMode, combo: combo) {})
+        let center = HotKeyCenter()
+        #expect(!center.register(.captureArea, combo: combo) {})
+        #expect(center.combo(for: .captureArea) == combo)
+        #expect(center.unboundActions == [.captureArea])
+        owner.unregister(.toggleDrawMode)
+        #expect(center.retry(.captureArea))
+        #expect(center.isRegistered(.captureArea))
+        center.unregister(.captureArea)
+        #expect(center.combo(for: .captureArea) == nil)
     }
 }
