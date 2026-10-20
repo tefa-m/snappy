@@ -26,3 +26,6 @@ DerivedData/
 *.key
 *.cer
 *.mobileprovision
+
+# Private agent notes (never commit)
+CLAUDE.local.md
