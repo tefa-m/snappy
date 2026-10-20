@@ -99,25 +99,28 @@ enum RecordingExport {
     }
 }
 
-/// Where each take was last saved — per **take**, not per window (fix round
-/// 1, finding 3). A take outlives its window (the latest is reopenable), so
-/// Copy in a reopened window still pastes the saved file, and a Save that
-/// finishes after its window closed is still recorded. The coordinator owns
-/// it and forgets the takes it deletes.
+/// Where each take was last saved, per **export size** — per **take**, not
+/// per window (fix round 1, finding 3). A take outlives its window (the latest
+/// is reopenable), so Copy in a reopened window still pastes the saved file,
+/// and a Save that finishes after its window closed is still recorded. Copy
+/// reuses a saved file only when it was saved at the stop Copy asks for
+/// (`RecordingExportSource`). The coordinator owns it and forgets the takes
+/// it deletes.
 @MainActor
 final class RecordingSavedFiles {
-    private var saved: [URL: URL] = [:]
+    private var saved: [URL: [ExportScale: URL]] = [:]
 
-    /// A Save of `take` finished as `file`. Ignored when the take is already
-    /// gone (its window closed and it was deleted while the Save ran).
-    func record(_ file: URL, for take: URL) {
+    /// A Save of `take` at `scale` finished as `file`. Ignored when the take
+    /// is already gone (its window closed and it was deleted while the Save
+    /// ran).
+    func record(_ file: URL, for take: URL, scale: ExportScale = .full) {
         guard FileManager.default.fileExists(atPath: take.path(percentEncoded: false)) else { return }
-        saved[take.standardizedFileURL] = file
+        saved[take.standardizedFileURL, default: [:]][scale] = file
     }
 
-    /// The file `take` was last saved as, while it still exists.
-    func savedFile(for take: URL) -> URL? {
-        guard let file = saved[take.standardizedFileURL],
+    /// The file `take` was last saved as at `scale`, while it still exists.
+    func savedFile(for take: URL, scale: ExportScale = .full) -> URL? {
+        guard let file = saved[take.standardizedFileURL]?[scale],
               FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) else { return nil }
         return file
     }
@@ -126,5 +129,78 @@ final class RecordingSavedFiles {
     func retain(only kept: Set<URL>) {
         let keep = Set(kept.map(\.standardizedFileURL))
         saved = saved.filter { keep.contains($0.key) }
+    }
+}
+
+/// What Save or Copy exports at the current stop — PURE, tested. The take
+/// itself is never modified: 100 % exports it as is (bit-identical, no
+/// re-encode); a smaller stop exports a separate re-encode
+/// (`RecordingTranscoder`), made once per stop and kept until the next stop's
+/// encode or the window closes. **Never** falls back to the full-size take.
+enum RecordingExportSource: Equatable {
+    /// 100 %: the take as is (Save stages a link, Copy clones it).
+    case take
+    /// A file already saved at this stop — Copy pastes it directly.
+    case saved(URL)
+    /// A finished re-encode at this stop.
+    case encoded(URL)
+    /// No file at this stop yet: re-encode first.
+    case needsEncode
+
+    /// Save always writes a new file: the take at 100 %, else the re-encode.
+    static func forSave(scale: ExportScale, encoded: URL?) -> Self {
+        if scale == .full { return .take }
+        return encoded.map(Self.encoded) ?? .needsEncode
+    }
+
+    /// Copy matches the current stop: a file saved at this stop is reused,
+    /// one saved at another stop never is.
+    static func forCopy(scale: ExportScale, saved: URL?, encoded: URL?) -> Self {
+        if let saved { return .saved(saved) }
+        if scale == .full { return .take }
+        return encoded.map(Self.encoded) ?? .needsEncode
+    }
+}
+
+/// The re-encodes of one recording window: one private folder in the system
+/// temporary directory holding at most one file — the latest stop encoded.
+/// A new encode replaces it, and closing the window removes the folder, so
+/// re-encodes go with the take (Copy's clipboard clone and Save's copy are
+/// separate files and outlive it).
+@MainActor
+final class RecordingExportCache {
+    let directory: URL
+    private(set) var encoded: (scale: ExportScale, file: URL)?
+
+    init(root: URL = FileManager.default.temporaryDirectory.appending(
+        path: "com.tefa.snappy/Exports", directoryHint: .isDirectory
+    )) {
+        directory = root.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+    }
+
+    /// The finished re-encode at `scale`, while it still exists.
+    func file(at scale: ExportScale) -> URL? {
+        guard let encoded, encoded.scale == scale,
+              FileManager.default.fileExists(atPath: encoded.file.path(percentEncoded: false)) else { return nil }
+        return encoded.file
+    }
+
+    /// Where the next encode at `scale` writes — a fresh name, so a running
+    /// Save of the previous file is never cut short. Creates the folder.
+    func prepare(_ scale: ExportScale) throws -> URL {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appending(path: "Export-\(scale.percent)-\(UUID().uuidString).mp4")
+    }
+
+    /// An encode finished: it replaces the previous file.
+    func store(_ file: URL, scale: ExportScale) {
+        if let previous = encoded?.file, previous != file { try? FileManager.default.removeItem(at: previous) }
+        encoded = (scale, file)
+    }
+
+    /// The window closed: every re-encode goes.
+    func discard() {
+        encoded = nil
+        try? FileManager.default.removeItem(at: directory)
     }
 }

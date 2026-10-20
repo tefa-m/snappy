@@ -39,6 +39,9 @@ struct RecordingSettings: Equatable, Sendable {
     var defaultColor: InkColorPreset = .red
     var defaultWidth: InkWidth = .medium
     var quality: RecordingQuality = .high
+    /// The export-size stop each new recording window opens at; the window's
+    /// slider is a per-take override that never writes back.
+    var exportScale: ExportScale = .full
     /// Session-only draw/interact toggle (registered only while a session is active).
     var drawModeHotKey: HotKeyCombo = .defaultDrawMode
     /// Session-only Magic Pen toggle (registered only while a session is active).

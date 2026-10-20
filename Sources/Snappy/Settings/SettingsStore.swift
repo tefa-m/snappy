@@ -25,6 +25,7 @@ final class SettingsStore {
         static let recordingDefaultColor = "recordingDefaultColor"
         static let recordingDefaultWidth = "recordingDefaultWidth"
         static let recordingQuality = "recordingQuality"
+        static let recordingExportScale = "recordingExportScale"
         static let recordingDrawModeHotKey = "recordingDrawModeHotKey"
         static let recordingMagicPenHotKey = "recordingMagicPenHotKey"
         static let recordingMagicPenWidth = "recordingMagicPenWidth"
@@ -143,6 +144,7 @@ final class SettingsStore {
                 defaultColor: recordingDefaultColor,
                 defaultWidth: recordingDefaultWidth,
                 quality: recordingQuality,
+                exportScale: recordingExportScale,
                 drawModeHotKey: recordingDrawModeHotKey,
                 magicPenHotKey: recordingMagicPenHotKey,
                 magicPenWidth: recordingMagicPenWidth
@@ -158,6 +160,7 @@ final class SettingsStore {
             recordingDefaultColor = newValue.defaultColor
             recordingDefaultWidth = newValue.defaultWidth
             recordingQuality = newValue.quality
+            recordingExportScale = newValue.exportScale
             recordingDrawModeHotKey = newValue.drawModeHotKey
             recordingMagicPenHotKey = newValue.magicPenHotKey
             recordingMagicPenWidth = newValue.magicPenWidth
@@ -241,6 +244,17 @@ final class SettingsStore {
                 ?? Self.recordingDefaults.quality
         }
         set { defaults.set(newValue.rawValue, forKey: Key.recordingQuality) }
+    }
+
+    /// The export size a new recording window opens at (100 / 75 / 50 /
+    /// 25 %). Default 100 %. Only read when a window opens — its slider never
+    /// writes back.
+    var recordingExportScale: ExportScale {
+        get {
+            (defaults.object(forKey: Key.recordingExportScale) as? Int).flatMap(ExportScale.init(rawValue:))
+                ?? Self.recordingDefaults.exportScale
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.recordingExportScale) }
     }
 
     /// Session-only draw/interact hot key. Default ⌃⌥D. Read at each session

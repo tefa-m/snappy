@@ -117,15 +117,6 @@ import Testing
         #expect(RecordingWindowStatus.title(videoSize: nil) == "Recording")
         #expect(RecordingWindowStatus.title(videoSize: .zero) == "Recording")
     }
-
-    @Test func capsuleAddsTheDurationRoundedToTheSecond() {
-        let title = "Recording 1280 × 720"
-        #expect(RecordingWindowStatus.text(title: title, duration: 41.6) == "Recording 1280 × 720 · 0:42")
-        #expect(RecordingWindowStatus.text(title: title, duration: 0.2) == "Recording 1280 × 720 · 0:00")
-        #expect(RecordingWindowStatus.text(title: title, duration: 3723) == "Recording 1280 × 720 · 1:02:03")
-        #expect(RecordingWindowStatus.text(title: title, duration: nil) == title)
-        #expect(RecordingWindowStatus.text(title: title, duration: .nan) == title)
-    }
 }
 
 @Suite struct RecordingExportTests {

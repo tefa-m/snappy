@@ -393,14 +393,32 @@ Sources/Snappy/Recording/        Screen recording with live annotations
                                  canvas (AVPlayerView, autoplay, AVPlayerLooper
                                  loop, muted) under a unified glass toolbar
                                  Retake · Save · prominent Copy + status
-                                 capsule; RecordingWindow (window-level keys)
+                                 capsule "W × H · 0:42 · [export-size slider]
+                                 50 % · ≤ 4.6 MB" (takes the mouse);
+                                 re-encode jobs with progress on the pressed
+                                 button; RecordingWindow (window-level keys)
     RecordingWindowLayout.swift  PURE initial size, player fit, cascade origin;
-                                 RecordingWindowStatus ("Recording W × H ·
-                                 0:42") — tested
-    RecordingWindowAction.swift  PURE Space · R · ⌘S · ⇧⌘C/⌘C · Esc/Q/⌘W — tested
+                                 RecordingWindowStatus ("Recording W × H"
+                                 title) — tested
+    RecordingWindowAction.swift  PURE Space · R · ⌘S · ⇧⌘C/⌘C · [ ] ·
+                                 Esc/Q/⌘W — tested
     RecordingExport.swift        Staged Save (hard link), Copy clone, pasteboard;
                                  RecordingSavedFiles (where each take was
-                                 saved, per take) — tested
+                                 saved, per take AND export stop) + PURE
+                                 RecordingExportSource (take · saved ·
+                                 encoded · needsEncode) + RecordingExportCache
+                                 (one re-encode per window, temp dir) — tested
+    RecordingExportSize.swift    PURE ExportScale (25/50/75/100 % stops,
+                                 [ ] stepping), ExportSizing (even-rounded
+                                 output size, "≤" bound = OutputGeometry
+                                 bitrate × max(duration, 1 s) × 1.5 + MP4
+                                 overhead, read rounded up; fps snap),
+                                 ExportSizeText (capsule readouts) — tested
+    RecordingTranscoder.swift    Nonisolated AVAssetReader → AVAssetWriter
+                                 re-encode at a smaller stop (writer scales,
+                                 OutputGeometry.videoSettings, no audio),
+                                 cancellable, partial file removed — tested
+                                 on a synthetic take
     RecordingNamer.swift         PURE "Recording … .mp4" + " (2)" — tested
 ```
 
@@ -1278,6 +1296,39 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
   through `RecordingWindowContext`, trimmed to `ledger.kept`): a reopened
   window's Copy pastes the saved file, and a Save that finishes after its
   window closed is still recorded (fix round 1).
+- **Export size never touches the take (2026-10-20).** The status capsule's
+  slider (`ExportScale`, 100/75/50/25 %, opening at Settings' *Default
+  export size*, never written back) only changes what Save/Copy export. At
+  **100 %** the old path runs unchanged (staged link / clone — bit-identical,
+  no re-encode). At a **smaller stop** `RecordingTranscoder` re-encodes the
+  take into the window's `RecordingExportCache` folder (system temp,
+  `com.tefa.snappy/Exports/<uuid>/`, one file — the latest stop — removed
+  when the window closes), then Save stages *that* file and Copy clones it;
+  `RecordingSavedFiles` keys saves by stop, so Copy reuses a saved file only
+  at the stop it was saved at (`RecordingExportSource`). A failed or
+  cancelled re-encode exports **nothing** — never the full-size take; a
+  failure shows "Export failed" inline in the capsule (a cancel just restores
+  the readout). One re-encode at a time
+  (another Save/Copy beeps); **Q / Esc / ⌘W during it cancel only the
+  re-encode**, the traffic light closes the window and cancels it. The
+  re-encode keeps the stop it was started at even if the slider moves. Output
+  sides are rounded to the nearest even pixel; the frame rate is the take's
+  (nominal, snapped to 30/60), the bitrate `OutputGeometry.bitrate` for the
+  new size at the *current* Settings quality (a take doesn't record its own).
+  **The "≤" readout is a real bound** (`ExportSizing.estimatedBytes`, review
+  r1): the target bitrate is only the encoder's *average* — detailed content
+  overshoots it, and a lone key frame costs the same for one frame or thirty —
+  so the bound budgets ≥ 1 s at 1.5× the target plus MP4 overhead and is
+  formatted rounded up. `RecordingTranscoder` caps every 1 s window at the
+  target (`kVTCompressionPropertyKey_DataRateLimits`), checks the written
+  file against that same bound, redoes an over-bound encode up to twice at a
+  leaner rate and otherwise fails (`.tooLarge` → "Export failed") — it never
+  keeps a file larger than the readout promised. It also ends the writer
+  session at the take's own track end, so a one-frame (or held last) frame
+  keeps its length. The real file size replaces the bound once a re-encode or
+  Save exists at the stop. The capsule stays inside the window (≥ 10 pt
+  margins); when it can't fit, the `W × H · m:ss` readout detaches first
+  (`NSStackView` visibility priority) so the slider and size stay whole.
 - **Recording windows (v2 V1).** Normal titled windows (`isReleasedWhenClosed
   = false`, in Mission Control, not ⌘-Tab — LSUIElement), the editor's Tahoe
   Glass layout: `.fullSizeContentView` + transparent titlebar + `.unified`
@@ -1350,7 +1401,10 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
   gets a bezel box on the glass.
 - Recording window: keys are intercepted at window level (`sendEvent` /
   `performKeyEquivalent`, `RecordingWindow`) so the `AVPlayerView` can't eat
-  them — Space is play/pause even on a focused toolbar button.
+  them — Space is play/pause even on a focused toolbar button, and `[` / `]`
+  step the export size even on the focused slider. The status capsule is
+  **not** click-through any more (the slider needs the mouse); it is 36 pt
+  tall (`statusCapsuleHeight`) and `statusBand` grew to match.
 - **Window parts (v2, task V2, 2026-10-11).** S/W pick a part of the
   hovered window through Accessibility (`features/recording.md` › Window
   parts). The rules that must hold:

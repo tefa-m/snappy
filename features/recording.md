@@ -170,7 +170,8 @@ Control, as with the editor.
   `docs/recording-reviews/v2-v1.dev.md` › Fix round 1, finding 2.
 - **Tahoe Glass** like the editor: the `AVPlayerView` (autoplay, loop, muted, scrub bar) is the
   canvas under a glass toolbar **Retake · Save · prominent Copy** (trailing), plus a glass status
-  capsule `Recording W × H · 0:42`.
+  capsule `Recording W × H · 0:42` (since 2026-10-20: `W × H · 0:42 · [export-size slider] · size`,
+  see *Export size*).
 - **No video annotation** in this version (Q29). Live ink while recording covers annotations
   that change over time. Post-hoc whole-clip shapes (blur over a token, callouts) and timed
   annotations stay deferred.
@@ -181,7 +182,8 @@ Control, as with the editor.
 | **R** | Retake → Setup with the same target + setup annotations | closes |
 | **⌘S** | Save `Recording … .mp4` (never overwrites, ` (2)`) | **stays open** |
 | **⇧⌘C / ⌘C** | Copy the file to the pasteboard (the "done" action, as in the editor) | **closes** |
-| **Q · Esc · ⌘W · traffic light** | Close, **no prompt** (Q32) | closes |
+| **Q · Esc · ⌘W · traffic light** | Close, **no prompt** (Q32) — during an export re-encode Q / Esc / ⌘W cancel only the re-encode | closes |
+| **[ / ]** | Smaller / larger export size (see *Export size* below) | stays open |
 
 **Take lifetime (Q30):** each window **owns its take**. A new recording no longer deletes a
 take whose window is still open, so **several recording windows can coexist** (like editors).
@@ -189,6 +191,44 @@ Closing a window deletes its take, **except the latest take**, which stays in Ca
 "Reopen Last Recording" until a newer take exists *and* its own window is closed.
 **Reopen Last Recording** brings that take's window to the front if it's open, and never opens a
 second copy (Q43).
+
+### Export size (2026-10-20)
+
+> *Implemented on `feature/export-size`; manual checklist pending.* All decisions agreed with Tefa
+> before implementation.
+
+The status capsule reads **`W × H · 0:42 · [slider] 50 % · ≤ 4.6 MB`**. The slider snaps to four
+stops — **100 / 75 / 50 / 25 %** — and is also stepped with **`[`** (smaller) and **`]`** (larger);
+tooltips "Change export size ([ ])", "Smaller export ([)", "Larger export (])". `W × H` is the
+export's pixel size at the current stop; the window title keeps the take's own size.
+
+- **Resolution only.** A stop scales both sides, rounded to the nearest **even** pixel; the frame
+  rate stays the take's; the bitrate follows the recording rule (`OutputGeometry.bitrate`, bits per
+  pixel at the current *Video quality*) for the new size. No other knob — no trim, audio, GIF or
+  fit-to-size target.
+- **Size readout.** At 100 % the take's real file size ("18.4 MB"). At a smaller stop an
+  upper bound **"≤ X MB"** (target bitrate × at least 1 s × 1.5 headroom + MP4 overhead, rounded
+  up), replaced by the real size as soon as a re-encode (or a Save) at that stop exists. The bound
+  is **guaranteed**: the re-encode caps its rate and checks the file against it, retries leaner
+  (twice at most) when over, and otherwise fails with "Export failed" — it never keeps a bigger file.
+- **Narrow window.** The capsule stays inside the window; when it can't fit, the `W × H · 0:42`
+  readout gives way first (the title still names the take's size) — slider, stop and size stay.
+- **The take is never modified.** Save and Copy both export at the current stop. **100 %** is the
+  old path, unchanged — no re-encode, bit-identical. A **smaller stop** re-encodes (AVAssetReader →
+  AVAssetWriter, H.264 MP4, no audio) into a separate temp file, then Save writes it as
+  `Recording … .mp4` (never overwriting) and Copy pastes a `Recording … .mp4` clone. The window keeps
+  one re-encode (the latest stop) and deletes it when it closes.
+- **Copy after Save** always matches the slider: a saved file is reused only when it was saved at
+  the same stop, otherwise Copy re-encodes.
+- **While encoding** the pressed button turns into a progress ring (VoiceOver reads "Exporting
+  42 %", tooltip "Cancel export (Esc)"); the window stays usable (play, scrub, slider); another
+  Save/Copy beeps. **Esc / Q / ⌘W cancel only the re-encode.** The re-encode keeps the stop it was
+  started at. On failure the capsule shows **"Export failed"** in red until the stop changes or the
+  next export starts — nothing is saved or copied, and it **never** falls back to the full-size file.
+- **Settings → Recording › Default export size** (100 / 75 / 50 / 25 %, default **100 %**): every new
+  recording window opens at it. Moving the slider is a per-take override and never writes back.
+- The capsule is no longer click-through (the slider needs the mouse); it grew to 36 pt for the
+  slider's 28 pt hit target.
 
 ### Snap mode keys (Q33)
 
@@ -325,6 +365,7 @@ READY TO MERGE). All are minor and non-blocking, and none is fixed yet:
 | Default colour | the 5 presets | **red** |
 | Default line width | thin / medium / thick | **medium** |
 | Video quality | Standard / High (bitrate) | **High** |
+| Default export size | 100 / 75 / 50 / 25 % — the stop a new recording window opens at (its slider overrides it per take, never writing back) | **100 %** |
 | Draw-mode hot key | recorder field (applies live, also mid-session) | **⌃⌥D** |
 | Magic Pen hot key | recorder field (⌘, ⌃ or ⌥ required; refuses ⌃⌥D / Snappy's hot keys; applies live) | **⌃⌥P** |
 | Magic Pen thickness | Thin / Medium / Thick — **also in the menu bar**, applied live | **Medium** |
@@ -485,6 +526,17 @@ same change as the code.
 - **2026-10-15** — Magic Pen **review fix round** (Sol review `docs/magic-pen-reports/sol.md`, report `docs/magic-pen-reports/fix.md`): the Settings thickness pop-up now goes through `RecordingCoordinator.setMagicPenWidth` like the menu bar (it used to write only the store, so a running session kept drawing the old width and [ ] stepped from it); `onMagicPenWidthChange` refreshes an open Settings pop-up after a menu bar / [ ] / toolbar change. Reset tooltips follow `<verb phrase> (KEY)` ("Reset the Magic Pen shortcut to ⌃⌥P (Space)"). The toolbar's key ≡ click test compares content commands exactly and runs from all three widths.
 - **2026-10-20** — **Remappable hot keys** ([shortcuts-ux.md](shortcuts-ux.md)): a Draw Mode / Magic Pen change in Settings now applies **during** a running session (`RecordingCoordinator.rebindSessionHotKey` → `HotKeyCenter.replace`; a refused combo keeps the old one and the field says "That shortcut is already taken"; a combo refused at session start is registered by a later successful change and then advertised). Stop's tooltip names the configured Capture Area combo (`RecordingChromeHosting.setStopShortcut`), live too; the ● menu's Stop item likewise.
 - **2026-10-11** — **V3 part targets in recording** (`rec2/v3-part-targets`, report `docs/recording-reviews/v2-v3.dev.md`): W + part records the window's own stream **cropped by ScreenCaptureKit** — `sourceRect` on a `desktopIndependentWindow` filter is window-local (top-left, points) and `updateConfiguration` moves it live (verified with a probe; chosen over compositor cropping for native resolution and less data). PURE `PartCropGeometry` / `PartCropTracker` / `DecorationTarget` (`PartCrop.swift`): crop clamped to the window, pixel-snapped, even sides; the part's AX frame polled ~10 Hz through V2's handle and accepted only when the window held still around the read; nil = last rect kept; video size fixed at start, a part of another size letterboxed. Border, toolbar and ink panel follow the part (`onPartFrameChange`); ink stays window-anchored and is hidden outside the part (the decorator gets the part and its window separately); off screen holds like W; Retake opens on the part, then looks it up again (live frame, gone → whole window, closed window → its region; S + part keeps its rect); tracking ends before the session's AX restores. Live (throwaway harness, real pipeline, decoded MP4): every crop, the letterbox, a window move, a vanished part and a window resize as designed; before fix round 1, 5 of 8 crop changes had one frame with the ink still on the old crop. The V2 stopgap ("W + part records the whole window") is gone. **Fix round 1** (review: 2 major, 1 minor): the poll and Retake read the part's **visible** frame (clipped by its live ancestors, as the picker showed it — a table taller than its scroll view no longer widens the crop); frame reads are enqueued in main-actor order and answered only inside a session, and a Retake cancelled before its look-up never reads (an owed restore stays with its retry, Q40); each frame is decorated with the crop it was presented under — frames presented while SCK switches are held instead of guessed — and a failed crop update puts the border back on what is recorded and retries.
+- **2026-10-21** — **Export size review r2** (0 blocker, 0 major, 1 minor) — known limitation, accepted by the Leader: when an export exceeds its bound and is retried leaner, the progress ring has already shown 100 % and stays there through the retries (`RecordingTranscoder` reports 1 before the size check).
+- **2026-10-21** — **Export size review r1 fixes** (`feature/export-size`): (R2, major) the "≤"
+  readout was the encoder's average target × duration, which detailed content beat (161 KB for
+  "≤ 125 KB", one frame 24.6 KB for "≤ 5 KB") — now a real bound (≥ 1 s × 1.5× target + MP4
+  overhead, rounded up) that the transcoder enforces (1 s data-rate cap, ≤ 2 leaner retries, else
+  "Export failed"); (R3) a one-frame take's export doubled in length — the writer session now ends
+  at the take's own end; (R1) the capsule is held inside the window and drops its dimensions ·
+  duration readout first when too narrow. Tests: noise takes (1/2/30 frames) never exceed the
+  capsule's bound, an unfittable bound fails with no output, exact durations for 1/2/7 frames,
+  capsule labels unclipped at 440 pt and narrower.
+- **2026-10-20** — **Export size** (`feature/export-size`, decisions agreed with Tefa): the recording window's status capsule gets a 4-stop slider (100/75/50/25 %, `[` / `]`) and a size readout (real size, or "≤" estimate at a smaller stop). Save and Copy export at the stop; 100 % is unchanged, smaller stops re-encode into a temp file first (`RecordingTranscoder`, AVAssetReader → AVAssetWriter, writer-side scaling) with a progress ring on the pressed button, Esc/Q/⌘W cancelling only the re-encode, inline "Export failed" and never a full-size fallback. `RecordingSavedFiles` is keyed per stop; PURE `ExportScale` / `ExportSizing` / `ExportSizeText` / `RecordingExportSource`; Settings → Recording › Default export size. Tests: pure math + a real re-encode of a synthetic take (half size, no audio, take bit-identical, cancel removes the partial file) + window flows (Save at 50 %, Copy reuse rule, Esc cancel, failure).
 - **2026-10-20** — **Area / Window toolbar buttons** (`feat/toolbar-snap-buttons`): a new `[Area · Window]` group right after Record · timer (`rectangle.dashed` / `macwindow`, the same borderless on/off buttons as the tool picker). A click sends S / W's `.snap`; the active snap mode shows its on state, and a click on it steps back (`.stepBack` = Esc / Q / the same key again — "returns to where you were": restores the previous rect and the Setup mode or tool snapping started from, Pen after Pen, Pointer after Pointer; not always Pointer); the other one switches. Enabled in Setup and snap mode only — dimmed, never hidden, during the countdown and recording, so the capsule never changes width; Cancel stays enabled while snapping as before. Tooltips "Snap to a window's area (S)" / "Snap to a window (W)" (in snap mode the active one reads "Stop snapping and go back to the previous target"), the key shown only in Setup and snap mode. Tested against `RecordingSession` (enabled ⇔ the session acts) and with the real coordinator + chrome (`RecordingIntegrationTests.snapButtons`).
 
 ## Manual checklist
@@ -561,3 +613,14 @@ real-pieces integration tests (`RecordingIntegrationTests` › Magic Pen).
 - [ ] 👤 Click the active button: back to Setup with the previous rect (= Esc); click a window or Return still confirms
 - [ ] 👤 Tooltips: "Snap to a window's area (S)" / "Snap to a window (W)" in Setup; the active one reads "Stop snapping and go back to the previous target (…)"
 - [ ] 👤 Countdown and recording: both buttons dimmed, not clickable, no key in the tooltip; the toolbar keeps its width from Setup to recording
+
+## Manual checklist — Export size (2026-10-20, pending)
+
+- [ ] 👤 The capsule reads `W × H · m:ss · [slider] 100 % · 18.4 MB`; light and dark mode look like the rest of the window's glass; the slider snaps to 4 stops and is easy to hit
+- [ ] 👤 Drag the slider / press `[` and `]`: W × H halves etc. (even numbers), the size switches to "≤ X MB"; `[` at 25 % and `]` at 100 % do nothing; tooltips read "Change export size ([ ])", "Smaller export ([)", "Larger export (])"
+- [ ] 👤 At 100 %: ⌘S saves at once (no ring) and the file is byte-identical to before this feature; ⇧⌘C pastes the full-size file
+- [ ] 👤 At 50 %: ⌘S shows a progress ring on Save, then a `Recording … .mp4` at half size appears in the Save folder (QuickTime: half resolution, no audio, plays smoothly); the capsule now shows its real size
+- [ ] 👤 After that Save, ⇧⌘C at 50 % pastes the saved file (no second encode); move to 75 % and ⇧⌘C → re-encodes, pastes a 75 % file into Finder / Slack, window closes
+- [ ] 👤 During a long re-encode: playback, scrubbing and the slider still work; another ⌘S/⇧⌘C beeps; Esc (and Q, ⌘W) cancels the re-encode only — window stays, nothing saved; the button gets its icon back
+- [ ] 👤 Settings → Recording › Default export size = 50 %: the next recording window opens at 50 %; moving its slider doesn't change the Settings value
+- [ ] 👤 VoiceOver: the slider reads "Export size, 50 %"; the busy button reads "Exporting NN %"
