@@ -21,7 +21,7 @@ Index of all implemented features. Each entry points to a doc in `features/` wit
 
 ## Status
 
-Every feature above is implemented and covered by the automated gate (`swift build` with 0 warnings + `./scripts/test.sh`). Each feature doc ends with a manual checklist; checklists marked **pending** have not yet been walked through on screen since their last change — most notably the HIG design pass and Tahoe Glass look (2026-10-08), recording v1/v2 (2026-10-09/11), Magic Pen (2026-10-15) and pins-in-captures (2026-10-14). Treat those areas as less battle-tested.
+Every feature above is implemented and covered by the automated gate (`swift build` with 0 warnings + `./scripts/test.sh`). Each feature doc ends with a manual checklist; checklists marked **pending** have not yet been walked through on screen since their last change — most notably the HIG design pass and Tahoe Glass look (2026-10-08), recording v1/v2 (2026-10-09/11), Magic Pen (2026-10-15), pins-in-captures (2026-10-14), remappable hot keys and the toolbar Area / Window buttons (2026-10-20). Treat those areas as less battle-tested.
 
 ## Reading the history logs
 

@@ -2,7 +2,7 @@ import Carbon.HIToolbox
 import Foundation
 
 /// A global hot key combination: virtual key code + Carbon modifier mask.
-/// Stored in UserDefaults so the shortcut can become configurable later.
+/// Stored in UserDefaults; the user can remap it in Settings.
 struct HotKeyCombo: Equatable {
     /// Virtual key code (`kVK_*`).
     let keyCode: UInt32
