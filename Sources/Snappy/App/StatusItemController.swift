@@ -47,15 +47,16 @@ enum StatusMenuCommand: CaseIterable {
         }
     }
 
-    /// Display-only for the two capture shortcuts: the global triggers are
-    /// HotKeyCenter's Carbon hot keys, which fire (and swallow ⇧⌘4 / ⇧⌘3)
+    /// Display-only for the two capture shortcuts — the configured combos
+    /// (`bindings`, ⇧⌘4 / ⇧⌘3 by default): the global triggers are
+    /// HotKeyCenter's Carbon hot keys, which fire (and swallow them)
     /// system-wide. Window capture has no shortcut (menu-only by decision);
     /// recording starts from ⇧⌘4 → R, so its menu items show none.
-    var keyEquivalent: (key: String, modifiers: NSEvent.ModifierFlags) {
+    func keyEquivalent(in bindings: HotKeyBindings = .defaults) -> (key: String, modifiers: NSEvent.ModifierFlags) {
         switch self {
-        case .captureArea: ("4", [.command, .shift])
+        case .captureArea: bindings.captureArea.menuKeyEquivalent
         case .captureWindow: ("", [])
-        case .captureEntireScreen: ("3", [.command, .shift])
+        case .captureEntireScreen: bindings.captureFullscreen.menuKeyEquivalent
         case .recordArea, .reopenLastRecording, .magicPenThickness: ("", [])
         case .settings: (",", [.command])
         case .quit: ("q", [.command])
@@ -202,6 +203,8 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
     private let ticker: StatusItemTicker
     private let captureCoordinator: CaptureCoordinator
     private let recordingCoordinator: RecordingCoordinator
+    /// Settings' shortcut fields change the hot keys through it.
+    private let globalHotKeys: GlobalHotKeys
     private var settingsWindowController: SettingsWindowController?
     /// The item currently shows the recording ● (see `recordingPhaseDidChange`).
     private var showingStop = false
@@ -213,11 +216,13 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
     init(
         captureCoordinator: CaptureCoordinator,
         recordingCoordinator: RecordingCoordinator,
+        globalHotKeys: GlobalHotKeys = GlobalHotKeys(center: nil),
         statusItem: any StatusItemHosting = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength),
         ticker: StatusItemTicker = .live
     ) {
         self.captureCoordinator = captureCoordinator
         self.recordingCoordinator = recordingCoordinator
+        self.globalHotKeys = globalHotKeys
         self.statusItem = statusItem
         self.ticker = ticker
         super.init()
@@ -344,10 +349,12 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
             case .separator:
                 menu.addItem(.separator())
             case .stop:
+                // Display only: the Capture Area hot key, as configured.
+                let shortcut = globalHotKeys.bindings.captureArea.menuKeyEquivalent
                 let item = NSMenuItem(
-                    title: RecordingStatusMenu.stopTitle, action: #selector(stopRecording), keyEquivalent: "4"
+                    title: RecordingStatusMenu.stopTitle, action: #selector(stopRecording), keyEquivalent: shortcut.key
                 )
-                item.keyEquivalentModifierMask = [.command, .shift] // display only: the hot key
+                item.keyEquivalentModifierMask = shortcut.modifiers
                 item.target = self
                 menu.addItem(item)
             }
@@ -396,12 +403,13 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
                 menu.addItem(magicPenThicknessItem(command))
                 continue
             }
+            let shortcut = command.keyEquivalent(in: globalHotKeys.bindings)
             let item = NSMenuItem(
                 title: command.title,
                 action: action(for: command),
-                keyEquivalent: command.keyEquivalent.key
+                keyEquivalent: shortcut.key
             )
-            item.keyEquivalentModifierMask = command.keyEquivalent.modifiers
+            item.keyEquivalentModifierMask = shortcut.modifiers
             item.target = self
             if let symbol = command.symbolName {
                 item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
@@ -468,8 +476,19 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
         recordingCoordinator.reopenLastRecording()
     }
 
-    /// The menu auto-enables its items through this when it opens.
+    /// The menu auto-enables its items through this when it opens — also
+    /// where the capture items pick up a hot key Settings changed.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let command: StatusMenuCommand? = switch menuItem.action {
+        case #selector(captureArea): .captureArea
+        case #selector(captureFullscreen): .captureEntireScreen
+        default: nil
+        }
+        if let command {
+            let shortcut = command.keyEquivalent(in: globalHotKeys.bindings)
+            menuItem.keyEquivalent = shortcut.key
+            menuItem.keyEquivalentModifierMask = shortcut.modifiers
+        }
         if menuItem.action == #selector(reopenLastRecording) {
             return recordingCoordinator.canReopenLastRecording
         }
@@ -483,7 +502,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
         if settingsWindowController == nil {
             // Magic Pen thickness goes through the coordinator, as from the
             // menu bar, so a running session picks it up live.
-            settingsWindowController = SettingsWindowController { [recordingCoordinator] width in
+            settingsWindowController = SettingsWindowController(hotKeys: globalHotKeys) { [recordingCoordinator] width in
                 recordingCoordinator.setMagicPenWidth(width)
             }
         }
