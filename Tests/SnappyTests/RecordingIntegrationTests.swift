@@ -61,6 +61,8 @@ struct RecordingIntegrationTests {
         var refused: Set<HotKeyAction> = []
         /// Combos another app owns (for a Settings rebind).
         var refusedCombos: [HotKeyCombo] = []
+        /// Registered but refused by the system (at launch, or on a resume).
+        var unbound: Set<HotKeyAction> = []
         var handlers: [HotKeyAction: @MainActor () -> Void] = [:]
         var combos: [HotKeyAction: HotKeyCombo] = [:]
         private(set) var unregistered: [HotKeyAction] = []
@@ -77,7 +79,7 @@ struct RecordingIntegrationTests {
             unregistered.append(action)
             handlers[action] = nil
         }
-        func isRegistered(_ action: HotKeyAction) -> Bool { handlers[action] != nil }
+        func isRegistered(_ action: HotKeyAction) -> Bool { handlers[action] != nil && !unbound.contains(action) }
         func combo(for action: HotKeyAction) -> HotKeyCombo? { handlers[action] != nil ? combos[action] : nil }
         func replace(_ action: HotKeyAction, with combo: HotKeyCombo) -> Bool {
             guard handlers[action] != nil, !refusedCombos.contains(combo) else { return false }
@@ -760,6 +762,35 @@ struct RecordingIntegrationTests {
         #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it (⌥⌘5)")
         h.coordinator.captureHotKeyDidChange(.defaultCapture)
         #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it (⇧⌘4)")
+    }
+
+    @Test("A Capture Area combo refused at launch is not advertised on Stop; it is once a retry binds it")
+    func stopTooltipOmitsCaptureHotKeyRefusedAtLaunch() async throws {
+        let h = Harness()
+        defer { h.cleanUp() }
+        #expect(h.hotKeys.register(.captureArea, combo: .defaultCapture) {})
+        h.hotKeys.unbound = [.captureArea] // another app owned ⇧⌘4 at launch
+        #expect(h.coordinator.beginSession(target: try areaTarget(), userApp: nil))
+        h.coordinator.handle(.command(.record))
+        #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it")
+        h.hotKeys.unbound = [] // a retry bound it (`onStatusChange`)
+        h.coordinator.refreshHotKeyLabels()
+        #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it (⇧⌘4)")
+    }
+
+    @Test("A Capture Area combo lost on a resume drops off Stop's tooltip, a remap included")
+    func stopTooltipOmitsCaptureHotKeyRefusedOnResume() async throws {
+        let h = Harness()
+        defer { h.cleanUp() }
+        #expect(h.hotKeys.register(.captureArea, combo: .defaultCapture) {})
+        #expect(h.coordinator.beginSession(target: try areaTarget(), userApp: nil))
+        h.coordinator.handle(.command(.record))
+        #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it (⇧⌘4)")
+        h.hotKeys.unbound = [.captureArea] // taken while a Settings recorder paused it
+        h.coordinator.refreshHotKeyLabels()
+        #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it")
+        h.coordinator.captureHotKeyDidChange(.defaultCapture) // e.g. a layout switch re-announces it
+        #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it")
     }
 
     // MARK: - Menu bar clock (2026-10-09)

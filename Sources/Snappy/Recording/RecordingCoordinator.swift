@@ -289,8 +289,9 @@ final class RecordingCoordinator {
         let magicCombo = settingsValue.magicPenHotKey
         let magicRegistered = magicCombo != combo && registerSessionHotKey(.magicPen, combo: magicCombo, session: id)
         chrome.setMagicPenShortcut(magicRegistered ? magicCombo.displayString : nil)
-        // Stop's tooltip names the configured Capture Area combo (⇧⌘4 stops).
-        chrome.setStopShortcut(settings.captureHotKey.displayString)
+        // Stop's tooltip names the configured Capture Area combo (⇧⌘4 stops)
+        // — only while it is live.
+        chrome.setStopShortcut(stopShortcut(settings.captureHotKey))
 
         // Window levels, not call order, stack them (`RecordingWindowLevel`).
         overlay.show(session)
@@ -343,15 +344,24 @@ final class RecordingCoordinator {
     /// Settings changed the Capture Area hot key — the open toolbar's Stop
     /// tooltip names the new combo at once.
     func captureHotKeyDidChange(_ combo: HotKeyCombo) {
-        chrome?.setStopShortcut(combo.displayString)
+        chrome?.setStopShortcut(stopShortcut(combo))
     }
 
-    /// The keyboard layout changed, or a session hot key went live / was
-    /// lost (a resume, a retry): the open toolbar re-labels its tooltips,
-    /// advertising only a live session hot key.
+    /// Stop's advertised shortcut: the Capture Area combo, or nil while the
+    /// center holds it registered but unbound (refused at launch, or taken by
+    /// another app while a Settings recorder paused the hot keys) — a dead
+    /// combo is never promised. No center (tests): always advertised.
+    private func stopShortcut(_ combo: HotKeyCombo) -> String? {
+        if let hotKeys, hotKeys.combo(for: .captureArea) != nil, !hotKeys.isRegistered(.captureArea) { return nil }
+        return combo.displayString
+    }
+
+    /// The keyboard layout changed, or a hot key went live / was lost (a
+    /// resume, a retry): the open toolbar re-labels its tooltips, advertising
+    /// only a live hot key — Stop's Capture Area combo included.
     func refreshHotKeyLabels() {
         guard let chrome, session != nil else { return }
-        chrome.setStopShortcut(settings.captureHotKey.displayString)
+        chrome.setStopShortcut(stopShortcut(settings.captureHotKey))
         guard let hotKeys else { return }
         let draw = hotKeys.combo(for: .toggleDrawMode)
         chrome.setDrawModeShortcut(hotKeys.isRegistered(.toggleDrawMode) ? draw?.displayString : nil)

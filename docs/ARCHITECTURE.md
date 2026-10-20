@@ -204,13 +204,12 @@ Sources/Snappy/
                                  accepts drops), CanvasPaddingInput,
                                  RecordingSettingsText, ReservedHotKey,
                                  HotKeyRecorderInput (shortcut recorders:
-                                 per-key `HotKeyModifierRule` — ⌘/⌃/⌥ for
-                                 capture keys, ⌃/⌥ for session keys —
-                                 letters/digits, Snappy's own hot keys
-                                 refused, `.unavailable` when the system
-                                 refuses), SnappyHotKey (the four remappable
-                                 hot keys: names, defaults, actions, rules,
-                                 each reserves the other three),
+                                 one rule for all four — at least one of
+                                 ⌘/⌃/⌥ — letters/digits, Snappy's own hot
+                                 keys refused, `.unavailable` when the
+                                 system refuses), SnappyHotKey (the four
+                                 remappable hot keys: names, defaults,
+                                 actions, each reserves the other three),
                                  HotKeyBindings (all four combos; conflict,
                                  resetRejection), menuKeyEquivalent,
                                  SettingsPaneFit (clamp + scroll

@@ -533,7 +533,7 @@ real-pieces integration tests (`RecordingIntegrationTests` › Magic Pen).
 - [ ] 👤 Menu bar (not recording): "Magic Pen Thickness ▸" shows a checkmark on the current value; changing it changes Settings → Recording (also while Settings is open), and vice versa
 - [ ] 👤 While recording in Magic Pen mode, change the thickness in an open Settings window: the next stroke uses it, and ] steps from it
 - [ ] 👤 Menu bar while recording: a **plain click** on the red ● still **stops**; **right-click / ⌃-click / ⌥-click** opens Thin · Medium · Thick + Stop Recording; picking a thickness applies to the next stroke without leaving Magic Pen
-- [ ] 👤 Settings → Recording: the Magic Pen recorder refuses ⌃⌥D ("… already Snappy’s Draw Mode shortcut") and ⌘-only combos; the draw-mode recorder refuses ⌃⌥P; Reset works
+- [ ] 👤 Settings → Recording: the Magic Pen recorder refuses ⌃⌥D ("… already Snappy’s Draw Mode shortcut") and accepts ⌘-only combos such as ⌘P (one rule for all four hot keys: at least one of ⌘/⌃/⌥ — 2026-10-20); the draw-mode recorder refuses ⌃⌥P; Reset works
 - [ ] 👤 Set another app to own ⌃⌥P (or set the draw-mode shortcut to ⌃⌥P in an old build): a "Magic Pen Shortcut Unavailable" banner, the wand tooltip shows no shortcut, the button still works
 - [ ] 👤 Retake after a Magic Pen take: no Magic Pen ink comes back (setup ink does)
 - [ ] 👤 Light and dark content under the ink (white page, dark editor): the stroke is easy to see on both

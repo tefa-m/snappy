@@ -52,7 +52,8 @@ final class GlobalHotKeys {
     var onChange: [@MainActor (SnappyHotKey, HotKeyCombo) -> Void] = []
 
     /// Which hot keys are live may have changed (a resume, a retry) — the
-    /// Settings fields re-check `isLive`.
+    /// Settings fields re-check `isLive`, and the Stop labels (recording
+    /// toolbar, menu bar ●) `liveStopCombo`.
     var onStatusChange: [@MainActor () -> Void] = []
 
     /// `center` nil (tests, or no Carbon): combos are only validated and saved.
@@ -62,6 +63,10 @@ final class GlobalHotKeys {
     }
 
     var bindings: HotKeyBindings { settings.hotKeyBindings }
+
+    /// The Capture Area combo — what stops a recording — while it is live;
+    /// nil when the system refused it, so no Stop label promises it.
+    var liveStopCombo: HotKeyCombo? { isLive(.captureArea) ? bindings.captureArea : nil }
 
     /// Binds `combo` to `hotKey` and saves it; nil on success, else why it
     /// was refused (the old combo stays, bound and saved). The stored combo

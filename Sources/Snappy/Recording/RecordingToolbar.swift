@@ -147,11 +147,14 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
     ///
     /// A nil `drawModeKey` / `magicPenKey` means that hot key couldn't be
     /// registered this session: its toggle then has no shortcut to advertise.
+    /// A nil `stopKey` likewise: the Capture Area combo isn't live (the
+    /// system refused it), so Stop names no shortcut.
     func key(
-        drawModeKey: String?, magicPenKey: String? = nil, stopKey: String = "⇧⌘4", phase: RecordingPhase
+        drawModeKey: String?, magicPenKey: String? = nil, stopKey: String? = "⇧⌘4", phase: RecordingPhase
     ) -> String? {
         if self == .drawMode, drawModeKey == nil { return nil }
         if self == .magicPen, magicPenKey == nil { return nil }
+        if self == .stop, stopKey == nil { return nil }
         let live: Bool
         switch self {
         case .record:
@@ -171,7 +174,9 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
             default: live = false
             }
         }
-        return live ? shortcut(drawModeKey: drawModeKey ?? "", magicPenKey: magicPenKey ?? "", stopKey: stopKey) : nil
+        return live
+            ? shortcut(drawModeKey: drawModeKey ?? "", magicPenKey: magicPenKey ?? "", stopKey: stopKey ?? "")
+            : nil
     }
 
     /// Tooltip in the app-wide "<verb phrase> (KEY)" form (HIG Offering help:
@@ -180,7 +185,7 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
     /// once recording: Pointer hands the mouse back to the user's app, Cancel
     /// throws the take away.
     func toolTip(
-        drawModeKey: String?, magicPenKey: String? = nil, stopKey: String = "⇧⌘4", phase: RecordingPhase
+        drawModeKey: String?, magicPenKey: String? = nil, stopKey: String? = "⇧⌘4", phase: RecordingPhase
     ) -> String {
         let recording = phase.isRecording || phase == .stopping
         let magicPen = if case .recording(.magicPen) = phase { true } else { false }
@@ -356,7 +361,7 @@ final class RecordingToolbarView: NSGlassEffectView {
     private var drawModeKey: String?
     private var magicPenKey: String?
     /// The Capture Area hot key, which stops a recording (Settings may change it).
-    private var stopKey = HotKeyCombo.defaultCapture.displayString
+    private var stopKey: String? = HotKeyCombo.defaultCapture.displayString
 
     /// `drawModeKey` / `magicPenKey`: the configured hot keys as displayed
     /// (⌃⌥D, ⌃⌥P), nil when one isn't registered.
@@ -454,7 +459,7 @@ final class RecordingToolbarView: NSGlassEffectView {
     }
 
     /// The configured Capture Area hot key, named by Stop's tooltip.
-    func setStopKey(_ key: String) {
+    func setStopKey(_ key: String?) {
         guard key != stopKey else { return }
         stopKey = key
         render()

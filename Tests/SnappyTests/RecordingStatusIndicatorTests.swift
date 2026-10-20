@@ -98,10 +98,10 @@ struct StatusItemControllerRecordingTests {
         private let suiteName = "SnappyTests.StatusItem.\(UUID().uuidString)"
         private let captureCoordinator: CaptureCoordinator
 
-        init() {
+        init(center: GlobalHotKeysTests.Center? = nil) {
             defaults = UserDefaults(suiteName: suiteName)!
             captureCoordinator = CaptureCoordinator(settings: SettingsStore(defaults: defaults), recording: harness.coordinator)
-            hotKeys = GlobalHotKeys(settings: SettingsStore(defaults: defaults), center: nil)
+            hotKeys = GlobalHotKeys(settings: SettingsStore(defaults: defaults), center: center)
             controller = StatusItemController(
                 captureCoordinator: captureCoordinator, recordingCoordinator: harness.coordinator,
                 globalHotKeys: hotKeys, statusItem: item, ticker: clock.ticker
@@ -175,9 +175,27 @@ struct StatusItemControllerRecordingTests {
         #expect(f.button.accessibilityLabel() == "Recording, \(title), click to stop", sourceLocation: sourceLocation)
         #expect(f.button.image?.isTemplate == false, sourceLocation: sourceLocation)
         #expect(f.button.imagePosition == .imageLeading, sourceLocation: sourceLocation)
-        #expect(f.button.toolTip == RecordingStatusGlyph.toolTip(stopCombo: f.hotKeys.bindings.captureArea),
+        #expect(f.button.toolTip == RecordingStatusGlyph.toolTip(stopCombo: f.hotKeys.liveStopCombo),
                 sourceLocation: sourceLocation)
         #expect(f.button.target === f.controller && f.button.action != nil, sourceLocation: sourceLocation)
+    }
+
+    @Test("The red ● names Stop's combo only while it is live: refused at launch, retried, lost on a resume")
+    func stopToolTipFollowsCaptureHotKeyLiveness() async {
+        let center = GlobalHotKeysTests.Center()
+        center.unbound = [.captureArea] // another app owned ⇧⌘4 at launch
+        let f = Fixture(center: center)
+        defer { f.cleanUp() }
+        #expect(f.record())
+        #expect(f.hotKeys.liveStopCombo == nil)
+        #expect(f.button.toolTip == "Stop recording")
+        f.hotKeys.retryUnbound() // the other app let go
+        #expect(f.button.toolTip == "Stop recording (⇧⌘4)")
+        f.hotKeys.setRecorderActive(true)
+        center.unbound = [.captureArea] // taken while the recorder paused it
+        f.hotKeys.setRecorderActive(false)
+        #expect(f.button.toolTip == "Stop recording")
+        f.harness.coordinator.handle(.command(.cancel))
     }
 
     @Test func showsZeroOnCaptureStartTicksAndAClickStops() async {

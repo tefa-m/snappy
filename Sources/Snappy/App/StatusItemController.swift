@@ -142,8 +142,10 @@ enum RecordingStatusGlyph {
     /// entering recording and again whenever it changes.
     /// (The right-click menu is named in Settings → Recording's Magic Pen hint
     /// and offered to VoiceOver as `menuActionName`.)
-    static func toolTip(stopCombo: HotKeyCombo) -> String {
-        "Stop recording (\(stopCombo.displayString))"
+    /// A nil combo (the Capture Area hot key isn't live) names no shortcut.
+    static func toolTip(stopCombo: HotKeyCombo?) -> String {
+        guard let stopCombo else { return "Stop recording" }
+        return "Stop recording (\(stopCombo.displayString))"
     }
     /// VoiceOver's custom action on the item (the right-click menu).
     static let menuActionName = "Magic Pen Thickness"
@@ -244,12 +246,19 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
         recordingCoordinator.onMagicPenWidthChange = { [weak self] width in
             self?.settingsWindowController?.showMagicPenWidth(width)
         }
-        // A Capture Area remap (or a layout switch) mid-recording: the red ●
-        // must not advertise a dead stop shortcut.
-        globalHotKeys.onChange.append { [weak self] hotKey, combo in
-            guard let self, hotKey == .captureArea, self.showingStop else { return }
-            self.statusItem.button?.toolTip = RecordingStatusGlyph.toolTip(stopCombo: combo)
+        // A Capture Area remap (or a layout switch) mid-recording, or the
+        // combo going live / being lost (a resume, a retry): the red ● must
+        // not advertise a dead stop shortcut.
+        globalHotKeys.onChange.append { [weak self] hotKey, _ in
+            guard hotKey == .captureArea else { return }
+            self?.refreshStopToolTip()
         }
+        globalHotKeys.onStatusChange.append { [weak self] in self?.refreshStopToolTip() }
+    }
+
+    private func refreshStopToolTip() {
+        guard showingStop else { return }
+        statusItem.button?.toolTip = RecordingStatusGlyph.toolTip(stopCombo: globalHotKeys.liveStopCombo)
     }
 
     /// While recording the status item is a red ● plus the elapsed time,
@@ -265,7 +274,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
             button.imagePosition = .imageLeading
             // Monospaced digits: the item only widens when a digit is added.
             button.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-            button.toolTip = RecordingStatusGlyph.toolTip(stopCombo: globalHotKeys.bindings.captureArea)
+            button.toolTip = RecordingStatusGlyph.toolTip(stopCombo: globalHotKeys.liveStopCombo)
             button.target = self
             button.action = #selector(recordingItemClicked)
             // A right-click sends the action too; `RecordingStatusClick`
@@ -359,12 +368,14 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
             case .separator:
                 menu.addItem(.separator())
             case .stop:
-                // Display only: the Capture Area hot key, as configured.
-                let shortcut = globalHotKeys.bindings.captureArea.menuKeyEquivalent
+                // Display only: the Capture Area hot key, as configured —
+                // none while it isn't live.
+                let shortcut = globalHotKeys.liveStopCombo?.menuKeyEquivalent
                 let item = NSMenuItem(
-                    title: RecordingStatusMenu.stopTitle, action: #selector(stopRecording), keyEquivalent: shortcut.key
+                    title: RecordingStatusMenu.stopTitle, action: #selector(stopRecording),
+                    keyEquivalent: shortcut?.key ?? ""
                 )
-                item.keyEquivalentModifierMask = shortcut.modifiers
+                item.keyEquivalentModifierMask = shortcut?.modifiers ?? []
                 item.target = self
                 menu.addItem(item)
             }

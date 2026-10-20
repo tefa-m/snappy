@@ -71,7 +71,7 @@ final class RecordingChrome: RecordingChromeHosting {
         toolbar.setMagicPenKey(shortcut)
     }
 
-    func setStopShortcut(_ shortcut: String) {
+    func setStopShortcut(_ shortcut: String?) {
         guard !closed else { return }
         toolbar.setStopKey(shortcut)
     }
