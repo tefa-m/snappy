@@ -378,7 +378,9 @@ Sources/Snappy/Recording/        Screen recording with live annotations
                                  panel — never key, click-through except the
                                  toolbar; timer
     RecordingToolbar.swift       Glass toolbar view (incl. the Magic Pen wand
-                                 toggle) + PURE RecordingToolbarItem /
+                                 toggle and the Area / Window snap buttons —
+                                 phase-aware click mapping `command(phase:)`,
+                                 a repeat click steps back) + PURE RecordingToolbarItem /
                                  RecordingToolbarState (enabled ⇔ the session
                                  would act) / RecordingTimerText (toolbar
                                  00:42, menu bar 0:42) — tested

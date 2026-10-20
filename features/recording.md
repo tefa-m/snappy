@@ -378,7 +378,7 @@ Settings window follows a change made from the menu bar, [ ] or the toolbar.
 | # | Decision | Alternatives not taken |
 | - | -------- | ---------------------- |
 | MP1 | **A toggle mode, not a new engine**: a third recording mode `magicPen(resume:)` next to interact/draw, on the existing ink panel, compositor and fade model | a separate tool in the picker (would need ⌃⌥D, P, F); a separate overlay |
-| MP2 | **⌃⌥P**, session-only, configurable, must hold ⌃ or ⌥, refused if it equals ⌃⌥D or a Snappy hot key; refused by the system → banner + the toolbar button still works | a plain letter (would be typed into the user's app) |
+| MP2 | **⌃⌥P**, session-only, configurable, must hold ⌘, ⌃ or ⌥ (*superseded 2026-10-20: was ⌃ or ⌥ only — one rule for all four hot keys, see `shortcuts-ux.md`*), refused if it equals ⌃⌥D or a Snappy hot key; refused by the system → banner + the toolbar button still works | a plain letter (would be typed into the user's app) |
 | MP3 | **Turning off returns to where you came from** (interact or the draw tool); V → interact; ⌃⌥D → normal draw mode | always back to interact (the brief's wording) — kept for the common case, since entering from interact returns there |
 | MP4 | **Always fades**, delay = Settings' *Fade after*, 0.6 s fade-out; never setup ink | its own delay setting |
 | MP5 | **#FF451A @ 85 %**, soft dark halo, own thickness 4/6/10 pt (default Medium) | colour choice per preset (1–5 keep changing the normal ink) |
@@ -423,7 +423,7 @@ same change as the code.
 
 | Decision | Where |
 | -------- | ----- |
-| **Draw-mode hot key must include ⌃ or ⌥**: plain ⌘ / ⇧⌘ combos are refused, because Carbon swallows the combo system-wide for the whole session (⌘C/⌘V would die in the recorded app) | T6, Settings recorder |
+| ~~**Draw-mode hot key must include ⌃ or ⌥**: plain ⌘ / ⇧⌘ combos are refused, because Carbon swallows the combo system-wide for the whole session (⌘C/⌘V would die in the recorded app)~~ — *superseded 2026-10-20: every hot key needs at least one of ⌘/⌃/⌥ (`shortcuts-ux.md`)* | T6, Settings recorder |
 | **A W target is locked in Setup**: no handles, move or resize; drag outside or S/W replaces it | T1 |
 | **⌥-arrow resizes the rect from the keyboard**: → ← right edge, ↑ ↓ top edge, 1 pt (⇧⌥ 10 pt) — shortcuts-first rule | T1 |
 | **Fading ink**: fully visible for the fade delay (counted from mouse-up), then a **0.6 s** fade-out | T3 |
@@ -497,7 +497,7 @@ not quit — or a visual judgement). The E2E tester runs next.
 - [ ] 👤 ⇧⌘4 → drag → **R**: the screenshot panel closes, and the same rect appears live with an amber border, dimmed outside, glass toolbar below
 - [ ] 👤 "Record Area…" in the menu bar starts the same flow
 - [ ] 👤 Setup: move, 8 handles, arrow nudge (⇧ = 10 pt), ⌥-arrow resizes the right/top edge (⇧⌥ = 10 pt), scroll resizes around centre, drag outside draws a new rect, size chip updates
-- [ ] 👤 S: windows highlight on hover; click or S confirms; the rect snaps to the window's frame; Esc restores the previous rect
+- [ ] 👤 S: windows highlight on hover; click or Return/Enter confirms (S again steps back); the rect snaps to the window's frame; Esc restores the previous rect
 - [ ] 👤 W: same, and the border follows the window when it's moved during recording — ✅ *follow verified with the real ink + chrome (integration test: a moved window frame moves the ink panel and the border ring); a real dragged window is 👤*
 - [ ] 👤 W ↔ S switches the snap mode directly
 - [x] ✅ Draw a box and an arrow in Setup, press R: countdown 3-2-1 (or the configured value / none), both annotations are in the video and never fade — *live: a Setup box drawn, R → 3 s countdown → the box is in the decoded video at its exact position (arrow and the countdown's look: 👤)*
