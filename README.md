@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/editor.png" alt="Snappy's annotation editor" width="760">
+  <img src="assets/screenshots/hero.png" alt="Snappy's annotation editor in light and dark mode" width="900">
 </p>
 
 ## Features
@@ -29,9 +29,6 @@ Written in Swift with AppKit and Apple's own frameworks: ScreenCaptureKit,
 Vision and Core Image. **No external libraries, no network code, no analytics.**
 OCR runs on your Mac.
 
-<p align="center">
-  <img src="assets/screenshots/panel.png" alt="Snappy's preview panel" width="360">
-</p>
 
 ## Requirements
 
