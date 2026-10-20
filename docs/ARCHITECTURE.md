@@ -416,9 +416,10 @@ menu item → captureWindow   (unchanged: activates synchronously, then picks)
   CaptureCoordinator → RecordingCoordinator.beginSession(target clamped to its display,
                        userApp = the app that was frontmost before any Snappy window)
   SETUP      overlay (setup level, key) + ink (ink level) + chrome (chrome level); ⌃⌥D registered
-             S/W → snapping (WindowSnapPicker + WindowPartModel: window or part under the pointer;
-             same key back, other key switches, click / Return confirms; first entry without
-             Accessibility → the one-time prompt) · R → countdown (1 s ticks) · Esc / Cancel → cancelled
+             S/W or toolbar Area/Window → snapping (WindowSnapPicker + WindowPartModel: window or part
+             under the pointer; same key / the lit button back, other switches, click / Return confirms;
+             first entry without Accessibility → the one-time prompt) · R → countdown (1 s ticks)
+             · Esc / Cancel → cancelled
   RECORDING  RecordingTempStore.prepareNewTake (a new URL; deletes nothing)
              → pipeline.start(target, settings, ink.frameDecorator, url)
              overlay ordered out → activateUserApp (yield + activate): keys belong to the user's app

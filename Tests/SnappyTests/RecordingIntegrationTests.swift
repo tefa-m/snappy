@@ -697,6 +697,49 @@ struct RecordingIntegrationTests {
         #expect(Set(h.notices.map(\.title)).count == 2, "distinct titles → distinct banner identifiers")
     }
 
+    // MARK: - Snap buttons (2026-10-20)
+
+    @Test("Toolbar Area / Window: a click snaps like S / W, lights the mode, the active one steps back; dimmed once recording")
+    func snapButtons() async throws {
+        let h = Harness()
+        defer { h.cleanUp() }
+        let target = try areaTarget()
+        #expect(h.coordinator.beginSession(target: target, userApp: nil))
+        let area = try toolbarButton(.area)
+        let window = try toolbarButton(.window)
+        #expect(area.isEnabled && window.isEnabled)
+        #expect(area.state == .off && window.state == .off)
+        #expect(window.toolTip == "Snap to a window (W)")
+
+        _ = window.sendAction(window.action, to: window.target)
+        guard case .snapping(.window, _, .pointer) = h.coordinator.phase else {
+            Issue.record("not snapping to a window: \(h.coordinator.phase)")
+            return
+        }
+        #expect(window.state == .on && area.state == .off)
+        #expect(window.toolTip == "Stop snapping and go back to the previous target (W)")
+
+        _ = area.sendAction(area.action, to: area.target)
+        guard case .snapping(.area, _, .pointer) = h.coordinator.phase else {
+            Issue.record("did not switch to area snapping: \(h.coordinator.phase)")
+            return
+        }
+        #expect(area.state == .on && window.state == .off)
+
+        // The mode already on goes back, like S again or Esc.
+        _ = area.sendAction(area.action, to: area.target)
+        #expect(h.coordinator.phase == .setup(.pointer))
+        #expect(area.state == .off && window.state == .off)
+
+        h.coordinator.handle(.command(.record))
+        #expect(h.coordinator.phase == .recording(.interact))
+        #expect(!area.isEnabled && !window.isEnabled)
+        #expect(!area.isHidden && !window.isHidden && area.window != nil)
+        #expect(window.toolTip == "Snap to a window")
+        _ = window.sendAction(window.action, to: window.target)
+        #expect(h.coordinator.phase == .recording(.interact), "ignored while recording")
+    }
+
     // MARK: - Menu bar clock (2026-10-09)
 
     @Test("The capture start is reported once, when the pipeline runs — the clock the menu bar and toolbar share")

@@ -1,13 +1,14 @@
 import AppKit
 
 /// The recording toolbar's controls, in display order (`features/recording.md`,
-/// Recording chrome): `● Record / ■ Stop · 00:00 | Pointer · Pen · Highlighter ·
-/// Arrow · Oval · Box | color · width · fading | Clear · draw/interact · Magic
-/// Pen | Cancel`
+/// Recording chrome): `● Record / ■ Stop · 00:00 | Area · Window | Pointer ·
+/// Pen · Highlighter · Arrow · Oval · Box | color · width · fading | Clear ·
+/// draw/interact · Magic Pen | Cancel`
 /// — PURE, unit-tested. Record and Stop share the first slot; the timer is a
 /// label, not an item.
 enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
     case record, stop
+    case area, window
     case pointer, pen, highlighter, arrow, oval, box
     case color, width, fading
     case clear, drawMode, magicPen
@@ -17,6 +18,7 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
     /// Record/Stop slot (`RecordingToolbarState.primary`), followed by the timer.
     static let groups: [[RecordingToolbarItem]] = [
         [.record],
+        [.area, .window],
         [.pointer, .pen, .highlighter, .arrow, .oval, .box],
         [.color, .width, .fading],
         [.clear, .drawMode, .magicPen],
@@ -31,6 +33,8 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
         switch self {
         case .record: "Record"
         case .stop: "Stop"
+        case .area: "Snap to Area"
+        case .window: "Snap to Window"
         case .pointer: "Pointer"
         case .pen: "Pen"
         case .highlighter: "Highlighter"
@@ -55,6 +59,8 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
         switch self {
         case .record: "record.circle.fill"
         case .stop: "stop.circle.fill"
+        case .area: "rectangle.dashed"
+        case .window: "macwindow"
         case .pointer: "cursorarrow"
         case .pen: "scribble"
         case .highlighter: "highlighter"
@@ -93,12 +99,24 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
         }
     }
 
+    /// The snap mode this item enters; nil for everything but Area and Window.
+    var snapKind: SnapKind? {
+        switch self {
+        case .area: .area
+        case .window: .window
+        default: nil
+        }
+    }
+
     /// What a click sends. nil for Color and Width, which open a menu first
-    /// (`widthCommands(from:to:)` for the width steps).
+    /// (`widthCommands(from:to:)` for the width steps). Area and Window send
+    /// S / W's `.snap`; a click on the snap mode already on goes back instead
+    /// (`command(phase:)`).
     var command: RecordingCommand? {
         switch self {
         case .record: .record
         case .stop: .stop
+        case .area, .window: snapKind.map(RecordingCommand.snap)
         case .pointer: .pointer
         case .pen, .highlighter, .arrow, .oval, .box: tool.map(RecordingCommand.tool)
         case .color, .width: nil
@@ -110,6 +128,15 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
         }
     }
 
+    /// What a click sends in `phase` — `command`, except that in snap mode
+    /// the button of the mode already on steps back — same as Esc / Q, it returns
+    /// to where you were (the Setup mode or tool snapping started from) — exactly what
+    /// pressing its key again does there (`RecordingKeyMap`, Q33).
+    func command(phase: RecordingPhase) -> RecordingCommand? {
+        if case .snapping(let kind, _, _) = phase, snapKind == kind { return .stepBack }
+        return command
+    }
+
     /// The item's shortcut — the `RecordingKeyMap` binding, or the hot key for
     /// Stop / Draw Mode / Magic Pen (`drawModeKey` / `magicPenKey`, the
     /// configured combos) — whether or not it works in the current phase
@@ -118,6 +145,8 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
         switch self {
         case .record: "R"
         case .stop: "⇧⌘4"
+        case .area: "S"
+        case .window: "W"
         case .pointer: "V"
         case .pen: "P"
         case .highlighter: "H"
@@ -138,7 +167,8 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
     /// there does what clicking the button does (tested against
     /// `RecordingKeyMap` and `RecordingSession`). Tool and style keys reach
     /// Snappy only in Setup and draw mode — in interact mode they belong to
-    /// the user's app (Q15); R only starts from Setup; ⇧⌘4 and the draw-mode
+    /// the user's app (Q15); R only starts from Setup; S and W work in Setup
+    /// and snap mode only; ⇧⌘4 and the draw-mode
     /// hot key act only while recording; and Esc cancels only from Setup's
     /// Pointer mode — elsewhere it steps back one level instead. In Magic
     /// Pen mode the keys of draw mode work, except F (Magic Pen ink always
@@ -154,6 +184,11 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
         switch self {
         case .record:
             if case .setup = phase { live = true } else { live = false }
+        case .area, .window:
+            switch phase {
+            case .setup, .snapping: live = true
+            default: live = false
+            }
         case .stop, .drawMode, .magicPen:
             live = phase.isRecording
         case .cancel:
@@ -176,13 +211,18 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
     /// say what it does, never just the name), with the key only where it
     /// works (`key(drawModeKey:phase:)`). Pointer and Cancel change meaning
     /// once recording: Pointer hands the mouse back to the user's app, Cancel
-    /// throws the take away.
+    /// throws the take away. In snap mode the snap button that is on goes
+    /// back to the previous target (`command(phase:)`).
     func toolTip(drawModeKey: String?, magicPenKey: String? = nil, phase: RecordingPhase) -> String {
         let recording = phase.isRecording || phase == .stopping
         let magicPen = if case .recording(.magicPen) = phase { true } else { false }
+        let snapping: SnapKind? = if case .snapping(let kind, _, _) = phase { kind } else { nil }
+        let leavesSnapMode = snapKind != nil && snapKind == snapping
         let description = switch self {
         case .record: "Start recording this area"
         case .stop: "Stop recording and preview it"
+        case .area: leavesSnapMode ? "Stop snapping and go back to the previous target" : "Snap to a window's area"
+        case .window: leavesSnapMode ? "Stop snapping and go back to the previous target" : "Snap to a window"
         case .pointer: recording ? "Stop drawing and use your app" : "Move and resize the area"
         case .pen: "Draw freehand"
         case .highlighter: "Mark text with a translucent highlighter"
@@ -214,9 +254,10 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
 /// What the toolbar shows for a session phase — PURE, unit-tested. Mirrors
 /// `RecordingSession`'s rules so a control is enabled exactly when the session
 /// would act on its command: tools and style in Setup and while recording
-/// (a tool picked in interact mode enters draw mode); Record in Setup; Stop,
-/// the draw/interact toggle and Magic Pen while recording; only Cancel while
-/// snapping or counting down; nothing once the file is being finalised.
+/// (a tool picked in interact mode enters draw mode); Record in Setup; Area
+/// and Window in Setup and snap mode; Stop, the draw/interact toggle and
+/// Magic Pen while recording; only Cancel while counting down; nothing once
+/// the file is being finalised. Disabled controls stay in place, dimmed.
 struct RecordingToolbarState: Equatable {
     /// `.record` before recording, `.stop` from recording on.
     let primary: RecordingToolbarItem
@@ -229,11 +270,15 @@ struct RecordingToolbarState: Equatable {
     /// Magic Pen mode is on — its toggle shows the on state instead of draw
     /// mode's, and no tool is selected (it draws Magic Pen strokes only).
     let magicPenOn: Bool
+    /// The snap mode that is on — its Area / Window button shows the on state.
+    let snapping: SnapKind?
     private let enabled: Set<RecordingToolbarItem>
 
     init(phase: RecordingPhase) {
         self.phase = phase
         magicPenOn = if case .recording(.magicPen) = phase { true } else { false }
+        snapping = if case .snapping(let kind, _, _) = phase { kind } else { nil }
+        let snap: Set<RecordingToolbarItem> = [.area, .window]
         let tools = Set(RecordingToolbarItem.toolItems)
         let ink: Set<RecordingToolbarItem> = [.color, .width, .fading, .clear]
         switch phase {
@@ -241,12 +286,12 @@ struct RecordingToolbarState: Equatable {
             primary = .record
             selected = Self.item(for: mode)
             drawModeOn = false
-            enabled = tools.union(ink).union([.record, .cancel])
+            enabled = tools.union(ink).union(snap).union([.record, .cancel])
         case .snapping(_, _, let returnTo):
             primary = .record
             selected = Self.item(for: returnTo)
             drawModeOn = false
-            enabled = [.cancel]
+            enabled = snap.union([.cancel])
         case .countdown:
             primary = .record
             selected = .pointer
@@ -456,6 +501,8 @@ final class RecordingToolbarView: NSGlassEffectView {
             switch item {
             case .pointer, .pen, .highlighter, .arrow, .oval, .box:
                 setOn(state.selected == item, button)
+            case .area, .window:
+                setOn(item.snapKind == state.snapping, button)
             case .fading:
                 setOn(inkStyle.fading, button)
             case .drawMode:
@@ -510,7 +557,7 @@ final class RecordingToolbarView: NSGlassEffectView {
         button.action = #selector(buttonClicked(_:))
         button.tag = RecordingToolbarItem.allCases.firstIndex(of: item)!
         switch item {
-        case .pointer, .pen, .highlighter, .arrow, .oval, .box, .fading, .drawMode, .magicPen:
+        case .area, .window, .pointer, .pen, .highlighter, .arrow, .oval, .box, .fading, .drawMode, .magicPen:
             button.setButtonType(.pushOnPushOff)
         default:
             button.setButtonType(.momentaryPushIn)
@@ -587,7 +634,7 @@ final class RecordingToolbarView: NSGlassEffectView {
         case .width:
             showWidthMenu(from: sender)
         default:
-            if let command = item.command { onCommand?(command) }
+            if let command = item.command(phase: state.phase) { onCommand?(command) }
         }
         // On/off buttons flip themselves on click. The session's answer has
         // already come back through `apply` when the command changed
