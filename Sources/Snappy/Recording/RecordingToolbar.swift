@@ -129,7 +129,8 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
     }
 
     /// What a click sends in `phase` — `command`, except that in snap mode
-    /// the button of the mode already on steps back (= Esc), exactly what
+    /// the button of the mode already on steps back — same as Esc / Q, it returns
+    /// to where you were (the Setup mode or tool snapping started from) — exactly what
     /// pressing its key again does there (`RecordingKeyMap`, Q33).
     func command(phase: RecordingPhase) -> RecordingCommand? {
         if case .snapping(let kind, _, _) = phase, snapKind == kind { return .stepBack }
@@ -220,8 +221,8 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
         let description = switch self {
         case .record: "Start recording this area"
         case .stop: "Stop recording and preview it"
-        case .area: leavesSnapMode ? "Stop snapping and restore the previous area" : "Snap to a window's area"
-        case .window: leavesSnapMode ? "Stop snapping and restore the previous area" : "Snap to a window"
+        case .area: leavesSnapMode ? "Stop snapping and go back to the previous target" : "Snap to a window's area"
+        case .window: leavesSnapMode ? "Stop snapping and go back to the previous target" : "Snap to a window"
         case .pointer: recording ? "Stop drawing and use your app" : "Move and resize the area"
         case .pen: "Draw freehand"
         case .highlighter: "Mark text with a translucent highlighter"

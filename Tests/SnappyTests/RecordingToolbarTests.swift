@@ -77,7 +77,7 @@ struct RecordingToolbarTests {
         }
     }
 
-    @Test("Area / Window: the active one returns to Pointer and restores the previous area, like Esc")
+    @Test("Area / Window: the active one steps back from Pointer, like Esc")
     func snapClickStepsBack() {
         var session = RecordingSession(target: RecordingToolbarStateTests.target, countdownSeconds: 3)
         session.handle(.command(RecordingToolbarItem.window.command(phase: session.phase)!))
@@ -91,6 +91,29 @@ struct RecordingToolbarTests {
         #expect(session.target == RecordingToolbarStateTests.target)
     }
 
+    @Test("Area / Window: the active one steps back to the Setup tool snapping started from, same as Esc / Q")
+    func snapClickReturnsToTheToolItCameFrom() {
+        let target = RecordingToolbarStateTests.target
+        for kind in [SnapKind.area, .window] {
+            let item: RecordingToolbarItem = kind == .area ? .area : .window
+            func snapFromPen() -> RecordingSession {
+                var session = RecordingSession(target: target, countdownSeconds: 3)
+                session.handle(.command(RecordingToolbarItem.pen.command(phase: session.phase)!))
+                #expect(session.phase == .setup(.tool(.pen)))
+                session.handle(.command(item.command(phase: session.phase)!))
+                #expect(session.phase == .snapping(kind, previous: target, returnTo: .tool(.pen)))
+                return session
+            }
+            var clicked = snapFromPen()
+            clicked.handle(.command(item.command(phase: clicked.phase)!))
+            var escaped = snapFromPen()
+            escaped.handle(.command(.stepBack))
+            #expect(clicked.phase == .setup(.tool(.pen)), "\(kind): back to Pen, not Pointer")
+            #expect(clicked.phase == escaped.phase, "\(kind): the click equals Esc / Q")
+            #expect(clicked.target == target)
+        }
+    }
+
     @Test("Area / Window tooltips: S / W in Setup and snap mode only")
     func snapTooltips() {
         let target = RecordingToolbarStateTests.target
@@ -98,7 +121,7 @@ struct RecordingToolbarTests {
         #expect(RecordingToolbarItem.window.toolTip(drawModeKey: drawKey, phase: .setup(.tool(.box))) == "Snap to a window (W)")
         let snapWindow = RecordingPhase.snapping(.window, previous: target, returnTo: .pointer)
         #expect(RecordingToolbarItem.window.toolTip(drawModeKey: drawKey, phase: snapWindow)
-            == "Stop snapping and restore the previous area (W)")
+            == "Stop snapping and go back to the previous target (W)")
         #expect(RecordingToolbarItem.area.toolTip(drawModeKey: drawKey, phase: snapWindow) == "Snap to a window's area (S)")
         for phase: RecordingPhase in [.countdown(remaining: 2), .recording(.interact), .recording(.draw(.pen)), .stopping] {
             #expect(RecordingToolbarItem.area.toolTip(drawModeKey: drawKey, phase: phase) == "Snap to a window's area")

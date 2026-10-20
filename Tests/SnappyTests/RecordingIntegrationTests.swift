@@ -717,7 +717,7 @@ struct RecordingIntegrationTests {
             return
         }
         #expect(window.state == .on && area.state == .off)
-        #expect(window.toolTip == "Stop snapping and restore the previous area (W)")
+        #expect(window.toolTip == "Stop snapping and go back to the previous target (W)")
 
         _ = area.sendAction(area.action, to: area.target)
         guard case .snapping(.area, _, .pointer) = h.coordinator.phase else {
