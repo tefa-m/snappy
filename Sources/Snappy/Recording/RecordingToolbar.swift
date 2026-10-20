@@ -111,13 +111,13 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
     }
 
     /// The item's shortcut — the `RecordingKeyMap` binding, or the hot key for
-    /// Stop / Draw Mode / Magic Pen (`drawModeKey` / `magicPenKey`, the
-    /// configured combos) — whether or not it works in the current phase
+    /// Stop / Draw Mode / Magic Pen (`stopKey` / `drawModeKey` / `magicPenKey`,
+    /// the configured combos) — whether or not it works in the current phase
     /// (`key(drawModeKey:magicPenKey:phase:)` decides that).
-    func shortcut(drawModeKey: String, magicPenKey: String = "") -> String {
+    func shortcut(drawModeKey: String, magicPenKey: String = "", stopKey: String = "⇧⌘4") -> String {
         switch self {
         case .record: "R"
-        case .stop: "⇧⌘4"
+        case .stop: stopKey
         case .pointer: "V"
         case .pen: "P"
         case .highlighter: "H"
@@ -147,7 +147,9 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
     ///
     /// A nil `drawModeKey` / `magicPenKey` means that hot key couldn't be
     /// registered this session: its toggle then has no shortcut to advertise.
-    func key(drawModeKey: String?, magicPenKey: String? = nil, phase: RecordingPhase) -> String? {
+    func key(
+        drawModeKey: String?, magicPenKey: String? = nil, stopKey: String = "⇧⌘4", phase: RecordingPhase
+    ) -> String? {
         if self == .drawMode, drawModeKey == nil { return nil }
         if self == .magicPen, magicPenKey == nil { return nil }
         let live: Bool
@@ -169,7 +171,7 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
             default: live = false
             }
         }
-        return live ? shortcut(drawModeKey: drawModeKey ?? "", magicPenKey: magicPenKey ?? "") : nil
+        return live ? shortcut(drawModeKey: drawModeKey ?? "", magicPenKey: magicPenKey ?? "", stopKey: stopKey) : nil
     }
 
     /// Tooltip in the app-wide "<verb phrase> (KEY)" form (HIG Offering help:
@@ -177,7 +179,9 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
     /// works (`key(drawModeKey:phase:)`). Pointer and Cancel change meaning
     /// once recording: Pointer hands the mouse back to the user's app, Cancel
     /// throws the take away.
-    func toolTip(drawModeKey: String?, magicPenKey: String? = nil, phase: RecordingPhase) -> String {
+    func toolTip(
+        drawModeKey: String?, magicPenKey: String? = nil, stopKey: String = "⇧⌘4", phase: RecordingPhase
+    ) -> String {
         let recording = phase.isRecording || phase == .stopping
         let magicPen = if case .recording(.magicPen) = phase { true } else { false }
         let description = switch self {
@@ -197,7 +201,7 @@ enum RecordingToolbarItem: CaseIterable, Equatable, Hashable {
         case .magicPen: "Draw fading ink"
         case .cancel: recording ? "Discard this recording" : "Cancel recording"
         }
-        guard let key = key(drawModeKey: drawModeKey, magicPenKey: magicPenKey, phase: phase) else {
+        guard let key = key(drawModeKey: drawModeKey, magicPenKey: magicPenKey, stopKey: stopKey, phase: phase) else {
             return description
         }
         return "\(description) (\(key))"
@@ -351,6 +355,8 @@ final class RecordingToolbarView: NSGlassEffectView {
     private var timerRunning = false
     private var drawModeKey: String?
     private var magicPenKey: String?
+    /// The Capture Area hot key, which stops a recording (Settings may change it).
+    private var stopKey = HotKeyCombo.defaultCapture.displayString
 
     /// `drawModeKey` / `magicPenKey`: the configured hot keys as displayed
     /// (⌃⌥D, ⌃⌥P), nil when one isn't registered.
@@ -447,12 +453,21 @@ final class RecordingToolbarView: NSGlassEffectView {
         render()
     }
 
+    /// The configured Capture Area hot key, named by Stop's tooltip.
+    func setStopKey(_ key: String) {
+        guard key != stopKey else { return }
+        stopKey = key
+        render()
+    }
+
     private func render() {
         configure(primaryButton, for: state.primary)
         primaryButton.isEnabled = state.isEnabled(state.primary)
         for (item, button) in buttons {
             button.isEnabled = state.isEnabled(item)
-            button.toolTip = item.toolTip(drawModeKey: drawModeKey, magicPenKey: magicPenKey, phase: state.phase)
+            button.toolTip = item.toolTip(
+                drawModeKey: drawModeKey, magicPenKey: magicPenKey, stopKey: stopKey, phase: state.phase
+            )
             switch item {
             case .pointer, .pen, .highlighter, .arrow, .oval, .box:
                 setOn(state.selected == item, button)
@@ -505,7 +520,9 @@ final class RecordingToolbarView: NSGlassEffectView {
         button.bezelStyle = .toolbar
         button.showsBorderOnlyWhileMouseInside = true
         button.setAccessibilityLabel(item.title)
-        button.toolTip = item.toolTip(drawModeKey: drawModeKey, magicPenKey: magicPenKey, phase: state.phase)
+        button.toolTip = item.toolTip(
+            drawModeKey: drawModeKey, magicPenKey: magicPenKey, stopKey: stopKey, phase: state.phase
+        )
         button.target = self
         button.action = #selector(buttonClicked(_:))
         button.tag = RecordingToolbarItem.allCases.firstIndex(of: item)!
