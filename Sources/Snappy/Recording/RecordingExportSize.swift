@@ -47,17 +47,36 @@ enum ExportSizing {
         return VideoSize(width: side(source.width), height: side(source.height))
     }
 
-    /// The upper-bound size of a re-encode: the target bitrate (the same
+    /// The upper bound of a re-encode, in bytes — the "≤" readout, and the
+    /// limit `RecordingTranscoder` holds the file to (it re-encodes leaner,
+    /// and fails rather than exceed it). The target bitrate (the same
     /// bits-per-pixel rule as recording, `OutputGeometry.bitrate`) × the
-    /// duration, in bytes. The encoder averages at or below the target on
-    /// screen content, so the real file is normally smaller.
+    /// duration is only the encoder's *average*: detailed content overshoots
+    /// it and a take's first key frame costs alike for one frame or thirty.
+    /// So the bound budgets at least one second (the encoder's rate window),
+    /// `rateHeadroom` over the target, and the MP4 container. Screen content
+    /// normally lands far below it.
     static func estimatedBytes(
         videoSize: VideoSize, framesPerSecond: Int, quality: RecordingQuality, duration: TimeInterval
     ) -> Int64 {
         guard duration.isFinite, duration > 0 else { return 0 }
         let bitrate = OutputGeometry.bitrate(quality: quality, videoSize: videoSize, framesPerSecond: framesPerSecond)
-        return Int64((Double(bitrate) * duration / 8).rounded(.up))
+        let video = Double(bitrate) * max(duration, rateWindow) * rateHeadroom / 8
+        let frames = (duration * Double(max(1, framesPerSecond))).rounded(.up)
+        let container = Double(containerBytes) + frames * Double(containerBytesPerFrame)
+        return Int64((video + container).rounded(.up))
     }
+
+    /// The encoder's rate-control window, seconds: the transcoder caps every
+    /// window at the target rate (`kVTCompressionPropertyKey_DataRateLimits`)
+    /// and the bound never budgets less than one.
+    static let rateWindow: TimeInterval = 1
+    /// How far over its target rate the encoder may land even under that cap
+    /// (measured: noise at 160 × 120 reaches ~1.4×).
+    static let rateHeadroom = 1.5
+    /// MP4 boxes (ftyp, moov, track headers) plus the per-sample tables.
+    static let containerBytes: Int64 = 4096
+    static let containerBytesPerFrame: Int64 = 16
 
     /// The take's frame rate as one of the recording rates: its track's
     /// nominal rate snapped to the nearest of 30 / 60 fps (an idle stretch
@@ -82,13 +101,22 @@ enum ExportSizing {
 /// PURE status-capsule readouts for the export size — tested.
 enum ExportSizeText {
     /// "18.4 MB" — decimal units like Finder: KB below 1 MB, one decimal
-    /// from MB up (none from 100 MB), GB from 1000 MB.
-    static func bytes(_ count: Int64) -> String {
-        let value = Double(max(0, count))
-        if value < 1_000_000 { return "\(max(1, Int((value / 1000).rounded(.up)))) KB" }
-        let (amount, unit) = value < 1_000_000_000 ? (value / 1_000_000, "MB") : (value / 1_000_000_000, "GB")
-        let text = amount < 100 ? String(format: "%.1f", amount) : String(Int(amount.rounded()))
-        return "\(text) \(unit)"
+    /// from MB up (none from 100 MB), GB from 1000 MB. `roundingUp` for a
+    /// bound, so the readout is never below the bytes it stands for.
+    static func bytes(_ count: Int64, roundingUp: Bool = false) -> String {
+        let count = max(0, count)
+        // Whole units of `step` bytes, in integers so a bound never rounds
+        // down through floating point.
+        func units(_ step: Int64) -> Int64 {
+            roundingUp ? (count + step - 1) / step : (count + step / 2) / step
+        }
+        if count < 1_000_000 { return "\(max(1, (count + 999) / 1000)) KB" }
+        let (unit, name): (Int64, String) = count < 1_000_000_000 ? (1_000_000, "MB") : (1_000_000_000, "GB")
+        if count < 100 * unit {
+            let tenths = units(unit / 10)
+            return "\(tenths / 10).\(tenths % 10) \(name)"
+        }
+        return "\(units(unit)) \(name)"
     }
 
     /// The size readout: the real file's size when one exists for the stop
@@ -97,7 +125,7 @@ enum ExportSizeText {
     /// known yet.
     static func size(actual: Int64?, estimate: Int64?) -> String {
         if let actual { return bytes(actual) }
-        if let estimate, estimate > 0 { return "≤ \(bytes(estimate))" }
+        if let estimate, estimate > 0 { return "≤ \(bytes(estimate, roundingUp: true))" }
         return ""
     }
 

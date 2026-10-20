@@ -56,17 +56,22 @@ import Testing
         }
     }
 
-    @Test func theEstimateIsTheTargetBitrateTimesTheDuration() {
-        // 640 × 360 × 60 fps × 0.1 bpp = 1 382 400 bit/s → 10 s = 1 728 000 bytes.
+    @Test func theEstimateBoundsTheTargetBitrateWithHeadroomAndTheContainer() {
+        // 640 × 360 × 60 fps × 0.1 bpp = 1 382 400 bit/s → 10 s = 1 728 000
+        // bytes at the target; × 1.5 headroom + 4096 + 600 frames × 16.
         let size = VideoSize(width: 640, height: 360)
         #expect(ExportSizing.estimatedBytes(videoSize: size, framesPerSecond: 60, quality: .high, duration: 10)
-            == 1_728_000)
-        #expect(ExportSizing.estimatedBytes(videoSize: size, framesPerSecond: 60, quality: .high, duration: 10)
-            == Int64(OutputGeometry.bitrate(quality: .high, videoSize: size, framesPerSecond: 60) * 10 / 8))
+            == 2_592_000 + 4096 + 9600)
         // Small frames hit the 1 Mbit/s floor, as recording does.
         #expect(ExportSizing.estimatedBytes(
             videoSize: VideoSize(width: 320, height: 180), framesPerSecond: 30, quality: .standard, duration: 10
-        ) == 1_250_000)
+        ) == 1_875_000 + 4096 + 4800)
+        // A take shorter than the rate window still budgets a whole one: its
+        // first key frame costs the same for one frame or thirty.
+        let oneFrame = ExportSizing.estimatedBytes(
+            videoSize: VideoSize(width: 160, height: 120), framesPerSecond: 30, quality: .high, duration: 1.0 / 30
+        )
+        #expect(oneFrame == 187_500 + 4096 + 16)
         #expect(ExportSizing.estimatedBytes(videoSize: size, framesPerSecond: 60, quality: .high, duration: 0) == 0)
         #expect(ExportSizing.estimatedBytes(videoSize: size, framesPerSecond: 60, quality: .high, duration: .nan) == 0)
     }
@@ -95,6 +100,15 @@ import Testing
         #expect(ExportSizeText.bytes(999) == "1 KB")
         #expect(ExportSizeText.bytes(150_400_000) == "150 MB")
         #expect(ExportSizeText.bytes(2_500_000_000) == "2.5 GB")
+    }
+
+    @Test func aBoundNeverReadsBelowItsBytes() {
+        #expect(ExportSizeText.bytes(18_400_000, roundingUp: true) == "18.4 MB")
+        #expect(ExportSizeText.bytes(18_400_001, roundingUp: true) == "18.5 MB")
+        #expect(ExportSizeText.bytes(18_449_999) == "18.4 MB")
+        #expect(ExportSizeText.bytes(150_000_001, roundingUp: true) == "151 MB")
+        #expect(ExportSizeText.bytes(2_500_000_001, roundingUp: true) == "2.6 GB")
+        #expect(ExportSizeText.size(actual: nil, estimate: 18_449_999) == "≤ 18.5 MB")
     }
 
     @Test func theRealSizeWinsOverTheEstimate() {
@@ -186,7 +200,9 @@ import Testing
 
 /// Real encodes of a small synthetic take.
 @Suite struct RecordingTranscoderTests {
-    static func makeTake(width: Int = 320, height: Int = 240, frames: Int = 30) async throws -> URL {
+    /// `noise`: random pixels — the costliest content to encode. The session
+    /// ends one frame after the last, as the recording pipeline's does.
+    static func makeTake(width: Int = 320, height: Int = 240, frames: Int = 30, noise: Bool = false) async throws -> URL {
         let url = FileManager.default.temporaryDirectory.appending(path: "SnappyTranscodeTake-\(UUID().uuidString).mp4")
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: OutputGeometry.videoSettings(
@@ -209,11 +225,16 @@ import Testing
             let pixels = try #require(buffer)
             CVPixelBufferLockBaseAddress(pixels, [])
             if let base = CVPixelBufferGetBaseAddress(pixels) {
-                memset(base, Int32(frame * 8 % 255), CVPixelBufferGetDataSize(pixels))
+                if noise {
+                    arc4random_buf(base, CVPixelBufferGetDataSize(pixels))
+                } else {
+                    memset(base, Int32(frame * 8 % 255), CVPixelBufferGetDataSize(pixels))
+                }
             }
             CVPixelBufferUnlockBaseAddress(pixels, [])
             #expect(adaptor.append(pixels, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30)))
         }
+        writer.endSession(atSourceTime: CMTime(value: CMTimeValue(frames), timescale: 30))
         input.markAsFinished()
         await writer.finishWriting()
         #expect(writer.status == .completed)
@@ -246,6 +267,58 @@ import Testing
         #expect(tracks.isEmpty)
         #expect(progress.values.last == 1)
         #expect(progress.values == progress.values.sorted())
+    }
+
+    /// Review R2: noise at 320 × 240 → 50 % overshot the old "≤" (target ×
+    /// duration) — 161 KB for "≤ 125 KB", 24.6 KB for one frame's "≤ 5 KB".
+    @Test(arguments: [1, 2, 30])
+    func aDetailedReEncodeNeverExceedsTheBoundTheCapsuleShows(frames: Int) async throws {
+        let take = try await Self.makeTake(frames: frames, noise: true)
+        let output = take.deletingLastPathComponent().appending(path: "SnappyTranscodeOut-\(UUID().uuidString).mp4")
+        defer {
+            try? FileManager.default.removeItem(at: take)
+            try? FileManager.default.removeItem(at: output)
+        }
+        // The capsule's own inputs (`RecordingWindowController.refreshStatus`).
+        let info = await RecordingWindowController.videoInfo(of: take)
+        let source = try #require(ExportSizing.videoSize(pixels: info.size))
+        let bound = ExportSizing.estimatedBytes(
+            videoSize: ExportSizing.videoSize(source: source, scale: .half),
+            framesPerSecond: ExportSizing.framesPerSecond(nominal: info.framesPerSecond ?? 0),
+            quality: .high, duration: try #require(info.duration)
+        )
+        _ = try await RecordingTranscoder.encode(take, to: output, scale: .half, quality: .high)
+        let bytes = Int64(try #require(try output.resourceValues(forKeys: [.fileSizeKey]).fileSize))
+        #expect(bytes <= bound, "\(bytes) bytes for \(ExportSizeText.size(actual: nil, estimate: bound))")
+    }
+
+    @Test func anEncodeThatCannotFitTheBoundFailsAndLeavesNoOutput() async throws {
+        let take = try await Self.makeTake(frames: 10, noise: true)
+        let output = take.deletingLastPathComponent().appending(path: "SnappyTranscodeOut-\(UUID().uuidString).mp4")
+        defer {
+            try? FileManager.default.removeItem(at: take)
+            try? FileManager.default.removeItem(at: output)
+        }
+        await #expect(throws: RecordingTranscoder.Failure.tooLarge) {
+            try await RecordingTranscoder.encode(take, to: output, scale: .half, quality: .high, byteLimit: 1000)
+        }
+        #expect(!FileManager.default.fileExists(atPath: output.path(percentEncoded: false)))
+    }
+
+    /// Review R3: a one-frame take came back twice as long (1/30 s → 2/30 s).
+    @Test(arguments: [1, 2, 7])
+    func aReEncodeKeepsTheTakesExactDuration(frames: Int) async throws {
+        let take = try await Self.makeTake(frames: frames)
+        let output = take.deletingLastPathComponent().appending(path: "SnappyTranscodeOut-\(UUID().uuidString).mp4")
+        defer {
+            try? FileManager.default.removeItem(at: take)
+            try? FileManager.default.removeItem(at: output)
+        }
+        _ = try await RecordingTranscoder.encode(take, to: output, scale: .half, quality: .high)
+        let before = try await AVURLAsset(url: take).load(.duration)
+        let after = try await AVURLAsset(url: output).load(.duration)
+        #expect(abs(CMTimeGetSeconds(after) - CMTimeGetSeconds(before)) < 1e-6)
+        #expect(abs(CMTimeGetSeconds(after) - Double(frames) / 30) < 1e-6)
     }
 
     @Test func aFileWithoutVideoFailsAndLeavesNoOutput() async throws {
