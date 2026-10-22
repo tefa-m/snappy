@@ -38,6 +38,47 @@ case $TAP in
     /opt/homebrew/* | /usr/local/Homebrew/* | */Library/Taps/*) rl_die "$TAP is Homebrew's own clone — use your working clone of the tap" ;;
 esac
 [ "$(git -C "$TAP" rev-parse --show-toplevel 2>/dev/null)" = "$TAP" ] || rl_die "$TAP is not the root of a git repository"
+
+# One update-tap.sh per tap repository at a time: an atomic mkdir lock in the
+# shared git dir (so linked worktrees serialize too), held from the first state
+# check through push, marker cleanup and rollback. A second run fails at once.
+# Only the owner (pid + start time) releases it; a dead owner's lock is taken over.
+LOCK="$(git -C "$TAP" rev-parse --path-format=absolute --git-common-dir)/snappy-update-tap.lock"
+LOCKED=0 RENDERED=0
+proc_start() { ps -o lstart= -p "$1" 2>/dev/null | sed 's/^ *//'; }
+ME_START=$(proc_start $$)
+on_exit() {
+    if [ "$RENDERED" = 1 ]; then # interrupted between render and commit: restore the casks
+        git -C "$TAP" reset -q --hard 2>/dev/null; git -C "$TAP" clean -fq -- Casks 2>/dev/null
+    fi
+    if [ "$LOCKED" = 1 ] && [ "$(sed -n 's/^pid //p' "$LOCK/owner" 2>/dev/null)" = $$ ]; then
+        rm -rf "$LOCK"
+    fi
+    LOCKED=0
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+take_lock() {
+    mkdir "$LOCK" 2>/dev/null || return 1
+    LOCKED=1
+    printf 'pid %s\nstart %s\n' $$ "$ME_START" >"$LOCK/owner"
+}
+if ! take_lock; then
+    O_PID=$(sed -n 's/^pid //p' "$LOCK/owner" 2>/dev/null || true)
+    O_START=$(sed -n 's/^start //p' "$LOCK/owner" 2>/dev/null || true)
+    BUSY="another update-tap.sh (pid ${O_PID:-unknown}) holds the tap lock $LOCK — wait for it to finish; if no such run exists, rm -rf '$LOCK'"
+    [ -n "$O_PID" ] || rl_die "$BUSY"
+    if [ -n "$(proc_start "$O_PID")" ] && [ "$(proc_start "$O_PID")" = "$O_START" ]; then rl_die "$BUSY"; fi
+    # Stale: serialize the takeover and re-check the owner under it.
+    mkdir "$LOCK.takeover" 2>/dev/null || rl_die "$BUSY"
+    if [ "$(sed -n 's/^pid //p' "$LOCK/owner" 2>/dev/null || true)" = "$O_PID" ]; then
+        echo "WARNING: taking over the stale tap lock $LOCK (owner pid $O_PID is no longer running)" >&2
+        rm -rf "$LOCK"
+    fi
+    take_lock || { rmdir "$LOCK.takeover"; rl_die "$BUSY"; }
+    rmdir "$LOCK.takeover"
+fi
 [ "$(git -C "$TAP" branch --show-current)" = main ] || rl_die "tap $TAP is not on main"
 [ -z "$(git -C "$TAP" status --porcelain)" ] || rl_die "tap $TAP has uncommitted changes"
 
@@ -159,6 +200,7 @@ fi
 mkdir -p "$TAP/Casks"
 FILES="" TOKENS=""
 render() {
+    RENDERED=1
     sed -e "s/@@VERSION@@/$V/g" -e "s/@@SHA256@@/$SUM/g" "$ROOT/scripts/templates/$1.rb.tmpl" >"$TAP/Casks/$1.rb"
     FILES="$FILES Casks/$1.rb" TOKENS="$TOKENS $1"
 }
@@ -167,12 +209,13 @@ render() {
 
 # shellcheck disable=SC2086 # FILES/TOKENS are space-separated, no spaces inside
 if ! (cd "$TAP" && brew style $FILES); then
-    git -C "$TAP" checkout -- . && git -C "$TAP" clean -fq -- Casks
+    git -C "$TAP" checkout -- . && git -C "$TAP" clean -fq -- Casks && RENDERED=0
     rl_die "brew style failed — tap left unchanged"
 fi
 # shellcheck disable=SC2086
 git -C "$TAP" add $FILES
 git -C "$TAP" commit --quiet -m "Snappy $V:$TOKENS"
+RENDERED=0
 # shellcheck disable=SC2086
 write_marker $FILES
 git -C "$TAP" push --quiet origin main ||

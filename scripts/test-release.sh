@@ -79,7 +79,12 @@ cat >"$T/bin/brew" <<'EOF'
 #!/bin/bash
 echo "brew $*" >>"$BREW_LOG"
 case $1 in
-    style) exit "${BREW_STYLE_RC:-0}" ;;
+    style) # BREW_STYLE_BARRIER=<path>: signal <path>.in, wait (bounded) for <path>.go
+        if [ -n "${BREW_STYLE_BARRIER:-}" ]; then
+            : >"$BREW_STYLE_BARRIER.in"; i=0
+            while [ ! -e "$BREW_STYLE_BARRIER.go" ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i + 1)); done
+        fi
+        exit "${BREW_STYLE_RC:-0}" ;;
     audit) exit 0 ;;
     *) echo "brew shim: refusing 'brew $1'" >&2; exit 1 ;;
 esac
@@ -351,6 +356,64 @@ H1=$(remote_head)
 fails "extra commit on top of a recorded one refused" "did not make" tap 1.2.0 "$SUM_A"
 eq "  remote untouched" "$H1" "$(remote_head)"
 git -C "$TAP" reset -q --hard origin/main; rm -f "$MARK"
+
+section "update-tap.sh: one run per tap at a time (C1)"
+new_sandbox lock
+LOCK="$TAP/.git/snappy-update-tap.lock"
+SUM_B=$(printf 'b%.0s' $(seq 64))
+lockgone() { [ -e "$LOCK" ] && echo held || echo released; }
+wait_file() { local i=0; while [ ! -e "$1" ] && [ $i -lt 400 ]; do sleep 0.05; i=$((i + 1)); done; [ -e "$1" ]; }
+# start_held <barrier> <dir> <args...> — update-tap in <dir> in the background, parked in brew style
+start_held() {
+    local b=$1 d=$2; shift 2; rm -f "$b.in" "$b.go"
+    (cd "$d" && BREW_STYLE_BARRIER=$b exec ./scripts/update-tap.sh "$@") >"$b.out" 2>&1 &
+    HELD=$!
+    wait_file "$b.in" || bad "background run never reached brew style" "$(cat "$b.out")"
+}
+B="$T/lock/bar"
+H0=$(git -C "$TAPGIT" rev-parse main)
+start_held "$B" "$R" 1.1.0 "$SUM_A"
+OWNER=$(sed -n 's/^pid //p' "$LOCK/owner")
+eq "  lock owned by the running update (A)" "$HELD" "$OWNER"
+CASKS=$(cat "$TAP"/Casks/*.rb | shasum)
+fails "overlapping run (B) fails loudly" "holds the tap lock" tap 1.2.0 "$SUM_B"
+has "  names the owner pid" "pid $OWNER" "$OUT"
+has "  names the lock path" "$LOCK" "$OUT"
+eq "  origin untouched by B" "$H0" "$(git -C "$TAPGIT" rev-parse main)"
+eq "  A's rendered casks untouched by B" "$CASKS" "$(cat "$TAP"/Casks/*.rb | shasum)"
+touch "$B.go"; wait "$HELD"; RC=$?
+eq "  A completes" 0 "$RC"
+has "  A published its own version" "committed and pushed Snappy 1.1.0" "$(cat "$B.out")"
+eq "  origin carries 1.1.0 with A's sha256 in both casks" "1.1.0|1.1.0 2" "$(tapstate) $(git -C "$TAPGIT" show main:Casks/snappy.rb main:Casks/snappy@beta.rb | grep -c "sha256 \"$SUM_A\"")"
+eq "  lock released after success" released "$(lockgone)"
+fails "style failure" "brew style failed" env BREW_STYLE_RC=1 bash -c "cd '$R' && ./scripts/update-tap.sh 1.3.0 $SUM_A"
+eq "  lock released after failure" released "$(lockgone)"
+start_held "$B" "$R" 1.4.0 "$SUM_A"
+kill -TERM "$HELD"; touch "$B.go"; wait "$HELD"; RC=$?
+eq "  SIGTERM: run exits 143" 143 "$RC"
+eq "  lock released after SIGTERM" released "$(lockgone)"
+eq "  rendered casks rolled back after SIGTERM" "1.1.0|1.1.0 " "$(tapstate) $(git -C "$TAP" status --porcelain)"
+eq "  origin unchanged by the killed run" "1.1.0|1.1.0" "$(tapstate)"
+sh -c 'exit 0' & DEAD=$!; wait "$DEAD"
+mkdir "$LOCK"; printf 'pid %s\nstart Thu Jan  1 00:00:00 1970\n' "$DEAD" >"$LOCK/owner"
+succeeds "stale lock (dead owner) is taken over" tap 1.2.0 "$SUM_A"
+has "  with a warning" "taking over the stale tap lock" "$OUT"
+eq "  casks published" "1.2.0|1.2.0" "$(tapstate)"
+eq "  lock released afterwards" released "$(lockgone)"
+mkdir "$LOCK"; printf 'pid %s\nstart Thu Jan  1 00:00:00 1970\n' $$ >"$LOCK/owner"
+succeeds "stale lock (pid reused by another process) is taken over" tap --plan 1.3.0
+has "  with a warning" "taking over the stale tap lock" "$OUT"
+mkdir "$LOCK"
+fails "lock without an owner record is not taken over" "holds the tap lock" tap --plan 1.3.0
+rm -rf "$LOCK"
+WT="$T/lock/tap-wt"
+git -C "$TAP" switch -q -c side; git -C "$TAP" worktree add -q "$WT" main
+SNAPPY_TAP_DIR="$WT" start_held "$B" "$R" 1.3.0 "$SUM_A"
+fails "linked worktree tap: run in the main clone is refused while one runs" "holds the tap lock" env SNAPPY_TAP_DIR="$TAP" bash -c "cd '$R' && ./scripts/update-tap.sh 1.4.0 $SUM_A"
+touch "$B.go"; wait "$HELD"; RC=$?
+eq "  the worktree run completes" 0 "$RC"
+eq "  ... and published 1.3.0" "1.3.0|1.3.0" "$(tapstate)"
+eq "  shared lock released" released "$(lockgone)"
 
 # =================================================================================
 section "release.sh: betas, dry run, stable promotion"
