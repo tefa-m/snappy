@@ -37,18 +37,23 @@ OCR runs on your Mac.
 
 ## Install
 
-### Homebrew (prebuilt, universal binary)
+### Homebrew (recommended)
 
 ```sh
-brew install --cask tefa-m/snappy/snappy
+brew install --cask tefa-m/snappy/snappy        # stable
+brew install --cask tefa-m/snappy/snappy@beta   # beta: new features first, may be rough
 ```
 
-The release is **ad-hoc signed, not notarized**, so Gatekeeper blocks the first launch. The
-cask removes the quarantine flag for you; if you downloaded the zip from the
-[Releases page](https://github.com/tefa-m/snappy/releases) yourself, run
-`xattr -dr com.apple.quarantine /Applications/Snappy.app` once. Update with
-`brew upgrade --cask snappy`. Every update re-signs the app, so macOS asks for Screen Recording
-permission again.
+Update with `brew upgrade --cask snappy` (or `snappy@beta`). The two can't be installed side
+by side; to switch channels, uninstall one first, e.g.
+`brew uninstall --cask snappy@beta && brew install --cask tefa-m/snappy/snappy`. Your settings
+are kept.
+
+The app is a universal binary, **ad-hoc signed, not notarized**, so Gatekeeper would block
+the first launch. The cask removes the quarantine flag for you; if you downloaded the zip
+from the [Releases page](https://github.com/tefa-m/snappy/releases) yourself, run
+`xattr -dr com.apple.quarantine /Applications/Snappy.app` once. Every update has a new
+signature, so macOS asks for Screen Recording permission again.
 
 ### From source
 
@@ -85,7 +90,9 @@ at any time to update (a running Snappy is restarted for you).
 
 ## Uninstall
 
-Quit Snappy and delete `Snappy.app`. To also remove its data:
+Installed with Homebrew: `brew uninstall --cask snappy` (or `snappy@beta`); add `--zap` to
+also remove its settings and caches. Otherwise quit Snappy and delete `Snappy.app`. To also
+remove its data:
 
 ```sh
 defaults delete com.tefa.snappy
@@ -103,8 +110,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how it works and
 [`docs/FEATURE_MAP.md`](docs/FEATURE_MAP.md) for the per-feature docs. Snappy was built with
 the help of AI coding agents.
 
-Snappy is distributed as source only. Builds are not notarized, so build it on the Mac
-you use it on.
+Releases (beta, stable, patch) are cut with `./scripts/release.sh`; see
+[`features/versioning.md`](features/versioning.md).
 
 ## License
 
