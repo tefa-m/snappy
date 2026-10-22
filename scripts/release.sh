@@ -9,7 +9,8 @@
 #   scripts/release.sh --resume <version>               finish a release whose tag is already pushed
 #
 #   --dry-run  plan, tests, build, local tag — then deletes the tag; nothing is
-#              pushed, published or tap-updated
+#              pushed, published or tap-updated (no y/N prompt). With --resume:
+#              read-only — prints what the resume would do
 #   --yes      skip the y/N prompt (required when stdin is not a TTY)
 #
 # Betas and stables are cut from origin/main, patches from origin/release/X.Y —
@@ -19,11 +20,15 @@
 # branch + tag -> draft GitHub release with the zip -> download it back and
 # verify its SHA-256 -> publish -> update the Homebrew tap (update-tap.sh).
 # A failure before the push deletes the local tag; after the push the script
-# prints how to --resume. A published version is never re-tagged: ship the next.
+# prints how to --resume. --resume runs the provenance gate unless the release is
+# already published, and only publishes an asset whose SHA-256 matches the one
+# recorded in the draft notes (a rebuilt asset rewrites that record first).
+# A published version is never re-tagged: ship the next.
 #
 # Environment: SNAPPY_RELEASE_ALLOW_UNBETAED=1 (stable without a beta on the same
 # commit), SNAPPY_RELEASE_TEST_CMD (test gate, default ./scripts/test.sh),
-# SNAPPY_RELEASE_SKIP_BUILD=1 (stub zip; sandbox tests only), SNAPPY_TAP_DIR.
+# SNAPPY_RELEASE_SKIP_BUILD=1 (stub zip; tests still run; sandbox tests only),
+# SNAPPY_RELEASE_REPO (gh repo, default tefa-m/snappy), SNAPPY_TAP_DIR.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT=$(pwd)
@@ -31,11 +36,11 @@ source scripts/lib/release-lib.sh
 
 usage() {
     echo "usage:" >&2
-    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2
+    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' >&2
     exit "${1:-2}"
 }
 
-DRY_RUN=0 YES=0 RESUME=0 POS1="" POS2="" POS3="" NPOS=0
+DRY_RUN=0 YES=0 RESUME=0 STATE="" POS1="" POS2="" POS3="" NPOS=0
 for arg in "$@"; do
     case $arg in
         --dry-run) DRY_RUN=1 ;;
@@ -157,6 +162,11 @@ if [ "$RESUME" = 1 ]; then
     rl_tag_exists "$TAG" || die "$TAG is on origin but was not fetched"
     COMMIT=$(rl_commit_of "$TAG")
     PUSHED=1
+    command -v gh >/dev/null || die "gh is not installed"
+    STATE=$(gh_release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
+    # Anything that can still publish passes the provenance gate; repairing the
+    # tap of an already published release does not need it.
+    [ "$STATE" = false ] || rl_provenance_gate origin/main || exit 1
 else
     remote_has_tag "$TAG" && die "tag $TAG already exists on origin — use --resume $V to finish it, or ship the next number"
     rl_tag_exists "$TAG" && die "tag $TAG already exists locally (published versions are never re-tagged — ship the next number)"
@@ -193,10 +203,6 @@ PREV=$(rl_prev_tag "$V" "$COMMIT")
 BODY=$(rl_notes_body "$V" "$COMMIT" "$HEADLINE")
 
 # --- plan -----------------------------------------------------------------------
-STATE=""
-if [ "$RESUME" = 1 ]; then
-    STATE=$(gh_release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo missing)
-fi
 PUBLISH_FLAGS="--prerelease"
 if [ "$CHANNEL" != beta ]; then
     if [ -z "$LATEST" ] || ! rl_gt "$LATEST" "$V"; then PUBLISH_FLAGS="--latest"; else PUBLISH_FLAGS="--latest=false"; fi
@@ -212,7 +218,7 @@ Release plan$([ "$DRY_RUN" = 1 ] && echo " (DRY RUN)")$([ "$RESUME" = 1 ] && ech
   branch    origin/$BRANCH
   commit    $(git log -1 --format='%h %s' "$COMMIT")
   base      ${PREV:-none}
-  push      git push --atomic origin $(git rev-parse --short "$COMMIT"):refs/heads/$BRANCH refs/tags/$TAG
+  push      $([ "$RESUME" = 1 ] && echo "(done: $TAG is on origin)" || echo "git push --atomic origin $(git rev-parse --short "$COMMIT"):refs/heads/$BRANCH refs/tags/$TAG")
   publish   GitHub release $RL_REPO_SLUG $TAG: draft -> verify SHA-256 -> publish $PUBLISH_FLAGS
   tap       $(printf '%s' "$TAP_PLAN" | sed '2,$s/^/            /')
 EOF
@@ -268,8 +274,57 @@ publish() {
 
 update_tap() { "$ROOT/scripts/update-tap.sh" "$V" "$SUM" || die "tap update failed"; }
 
+# recorded_sum — the SHA-256 the release notes record for the zip (empty if none).
+# It is written when the draft is created from the locally built zip, so it is
+# the independent reference for an asset found on a draft or published release.
+recorded_sum() {
+    gh_release view "$TAG" --json body --jq .body 2>/dev/null |
+        sed -n "s/^SHA-256 (\`Snappy-${V//./\\.}\\.zip\`): \`\([0-9a-f]\{64\}\)\`\$/\1/p" | tail -n 1 || true
+}
+
+# fetch_asset — download the release asset into $WORK/dl; fails if it is absent.
+fetch_asset() {
+    rm -rf "$WORK/dl" && mkdir -p "$WORK/dl"
+    gh_release download "$TAG" --pattern "Snappy-$V.zip" --dir "$WORK/dl" 2>/dev/null && [ -f "$WORK/dl/Snappy-$V.zip" ]
+}
+
 if [ "$RESUME" = 1 ]; then
-    command -v gh >/dev/null || die "gh is not installed"
+    # Read-only checks shared by --dry-run and the real resume (fail closed).
+    EXP="" ASSET=""
+    case $STATE in
+        true | false)
+            EXP=$(recorded_sum)
+            if fetch_asset; then ASSET=$(sha_of "$WORK/dl/Snappy-$V.zip"); fi
+            [ "$STATE" = false ] || [ -n "$EXP" ] ||
+                die "the draft's notes record no SHA-256 for Snappy-$V.zip, so its asset cannot be verified — delete the draft (gh release delete $TAG -R $RL_REPO_SLUG) and --resume again"
+            if [ -n "$ASSET" ] && [ -n "$EXP" ] && [ "$ASSET" != "$EXP" ]; then
+                die "the release asset's SHA-256 $ASSET differs from the $EXP recorded in the notes — not publishing. Remove the asset (gh release delete-asset $TAG Snappy-$V.zip -R $RL_REPO_SLUG) and --resume to rebuild it"
+            fi
+            [ "$STATE" = true ] || [ -n "$ASSET" ] || die "could not download the published asset Snappy-$V.zip" ;;
+        missing) ;;
+        *) die "unexpected release state '$STATE'" ;;
+    esac
+
+    if [ "$DRY_RUN" = 1 ]; then
+        echo "DRY RUN — --resume would:"
+        case $STATE in
+            missing) echo "  build Snappy-$V.zip from $TAG in a temporary worktree (tests are not re-run)"
+                     echo "  gh release create $TAG --draft with the zip and notes, download it back, verify its SHA-256" ;;
+            true) if [ -n "$ASSET" ]; then
+                      echo "  reuse the draft asset (SHA-256 $ASSET, matches the notes)"
+                  else
+                      echo "  rebuild Snappy-$V.zip from $TAG (the draft has no asset), record its SHA-256 in the"
+                      echo "  draft notes if it differs from $EXP, upload it, download it back and verify it"
+                  fi ;;
+        esac
+        [ "$STATE" = false ] && echo "  skip publishing ($TAG is already published; asset SHA-256 $ASSET)" ||
+            echo "  publish $TAG ($PUBLISH_FLAGS)"
+        echo "  update the tap: scripts/update-tap.sh $V ${ASSET:-<sha256>}"
+        echo "Nothing was pushed, uploaded, published or committed."
+        DONE=1
+        exit 0
+    fi
+
     case $STATE in
         missing)
             git worktree add --quiet --detach "$WT" "$COMMIT"
@@ -277,21 +332,27 @@ if [ "$RESUME" = 1 ]; then
             gh_release create "$TAG" "$ZIP" --draft --verify-tag --title "Snappy $V" --notes-file "$NOTES" || die "creating the draft failed"
             verify_asset; publish ;;
         true)
-            mkdir -p "$WORK/dl"
-            if gh_release download "$TAG" --pattern "Snappy-$V.zip" --dir "$WORK/dl" 2>/dev/null; then
-                cp "$WORK/dl/Snappy-$V.zip" "$ZIP"; SUM=$(sha_of "$ZIP")
+            if [ -n "$ASSET" ]; then
+                cp "$WORK/dl/Snappy-$V.zip" "$ZIP"; SUM=$ASSET
+                rl_info "Draft asset matches the recorded SHA-256: $SUM"
             else
                 git worktree add --quiet --detach "$WT" "$COMMIT"
                 build_zip; SUM=$(sha_of "$ZIP")
+                if [ "$SUM" != "$EXP" ]; then
+                    # A rebuilt zip need not be byte-identical: record the new checksum first.
+                    gh_release view "$TAG" --json body --jq .body >"$WORK/old-notes.md" || die "could not read the draft notes"
+                    sed "s/^SHA-256 (\`Snappy-${V//./\\.}\\.zip\`): \`$EXP\`\$/SHA-256 (\`Snappy-$V.zip\`): \`$SUM\`/" "$WORK/old-notes.md" >"$NOTES"
+                    gh_release edit "$TAG" --notes-file "$NOTES" || die "updating the draft notes failed"
+                    [ "$(recorded_sum)" = "$SUM" ] || die "the draft notes do not record the rebuilt SHA-256 $SUM — not publishing"
+                    rl_info "Draft notes now record the rebuilt SHA-256: $SUM"
+                fi
                 gh_release upload "$TAG" "$ZIP" --clobber || die "uploading the asset failed"
                 verify_asset
             fi
             publish ;;
         false)
-            mkdir -p "$WORK/dl"
-            gh_release download "$TAG" --pattern "Snappy-$V.zip" --dir "$WORK/dl" || die "could not download the published asset"
-            cp "$WORK/dl/Snappy-$V.zip" "$ZIP"; SUM=$(sha_of "$ZIP") ;;
-        *) die "unexpected release state '$STATE'" ;;
+            cp "$WORK/dl/Snappy-$V.zip" "$ZIP"; SUM=$ASSET
+            [ -n "$EXP" ] || echo "WARNING: the notes of $TAG record no SHA-256; using the published asset's $SUM" >&2 ;;
     esac
     update_tap
     DONE=1

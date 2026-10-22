@@ -4,11 +4,14 @@
 #   scripts/update-tap.sh <version> <sha256>   render, brew style, commit, push
 #   scripts/update-tap.sh --plan <version>     print what would change; touch nothing
 #
-# Rules (features/versioning.md):
+# Rules (features/versioning.md), against the casks as they are before the run:
 #   Casks/snappy.rb       updated iff <version> is stable AND above its version
-#   Casks/snappy@beta.rb  updated iff <version> (beta or stable) is above its
-#                         version; created if missing (when above the stable cask)
-# So a patch to an older line updates neither cask. Casks are rendered from
+#   Casks/snappy@beta.rb  updated (or created if missing) iff <version> (beta or
+#                         stable) is above both its version and the stable cask's
+# So a patch to an older line updates neither cask, a stale beta cask is never
+# moved below the stable one, and a newer stable moves both.
+# Pending local "Snappy <version>" cask commits from a run whose push failed are
+# pushed first; success is only reported once origin/main has the casks. Casks are rendered from
 # scripts/templates/*.rb.tmpl. The tap is the clone at SNAPPY_TAP_DIR (default:
 # ../homebrew-snappy next to the main checkout); it must be clean and on main.
 # Never touches Homebrew's own clone of the tap (under brew --repository).
@@ -50,9 +53,7 @@ decide() {
     if [ "$(rl_channel "$V")" != beta ] && { [ -z "$CUR_STABLE" ] || rl_gt "$V" "$CUR_STABLE"; }; then
         UPD_STABLE=1
     fi
-    if [ -n "$CUR_BETA" ]; then
-        rl_gt "$V" "$CUR_BETA" && UPD_BETA=1
-    elif [ -z "$CUR_STABLE" ] || rl_gt "$V" "$CUR_STABLE"; then
+    if { [ -z "$CUR_BETA" ] || rl_gt "$V" "$CUR_BETA"; } && { [ -z "$CUR_STABLE" ] || rl_gt "$V" "$CUR_STABLE"; }; then
         UPD_BETA=1
     fi
     return 0
@@ -73,9 +74,42 @@ fi
 
 command -v brew >/dev/null || rl_die "brew is not installed"
 git -C "$TAP" pull --ff-only --quiet || rl_die "git pull --ff-only in $TAP failed"
+
+# A previous run may have committed but failed to push: push those commits
+# (only update-tap's own cask commits), anything else is for a human.
+AHEAD=$(git -C "$TAP" rev-list --count origin/main..main)
+if [ "$AHEAD" != 0 ]; then
+    OTHER=$(git -C "$TAP" log --format='%s' origin/main..main | grep -v '^Snappy [0-9][^ ]*: ' || true)
+    FOREIGN=$(git -C "$TAP" diff --name-only origin/main main | grep -v -x -e 'Casks/snappy.rb' -e 'Casks/snappy@beta.rb' || true)
+    [ -z "$OTHER$FOREIGN" ] ||
+        rl_die "tap main is $AHEAD commit(s) ahead of origin/main with changes update-tap.sh did not make — push or drop them by hand ($TAP)"
+    echo "Tap: pushing $AHEAD pending cask commit(s) from an earlier run"
+    git -C "$TAP" push --quiet origin main || rl_die "pushing the pending tap commit(s) failed — origin/main is still stale; fix and re-run"
+fi
+
+# verify_remote <file>... — origin/main must equal local main, and every given
+# cask on origin/main must carry $V and $SUM.
+verify_remote() {
+    local f
+    git -C "$TAP" fetch --quiet origin || rl_die "git fetch in $TAP failed — cannot verify the pushed casks"
+    [ "$(git -C "$TAP" rev-parse main)" = "$(git -C "$TAP" rev-parse origin/main)" ] ||
+        rl_die "tap origin/main differs from local main after the push — the casks are not published"
+    for f in "$@"; do
+        git -C "$TAP" show "origin/main:$f" | grep -qx "  version \"$V\"" &&
+            git -C "$TAP" show "origin/main:$f" | grep -qx "  sha256 \"$SUM\"" ||
+            rl_die "origin/main:$f does not carry version $V / sha256 $SUM"
+    done
+}
+
 decide
 echo "Tap: $(describe_plan)"
+for f in snappy snappy@beta; do
+    if [ "$(cask_version "$TAP/Casks/$f.rb")" = "$V" ] && ! grep -qx "  sha256 \"$SUM\"" "$TAP/Casks/$f.rb"; then
+        rl_die "Casks/$f.rb is already at $V but with a different sha256 than $SUM — check the release asset"
+    fi
+done
 if [ "$UPD_STABLE" = 0 ] && [ "$UPD_BETA" = 0 ]; then
+    verify_remote
     echo "Tap: no cask change for $V"
     exit 0
 fi
@@ -97,7 +131,10 @@ fi
 # shellcheck disable=SC2086
 git -C "$TAP" add $FILES
 git -C "$TAP" commit --quiet -m "Snappy $V:$TOKENS"
-git -C "$TAP" push --quiet origin main || rl_die "pushing the tap failed — the commit is local in $TAP; push it by hand"
+git -C "$TAP" push --quiet origin main ||
+    rl_die "pushing the tap failed — the commit is local in $TAP; re-run this command (or --resume) to push it"
+# shellcheck disable=SC2086
+verify_remote $FILES
 echo "Tap: committed and pushed Snappy $V ($TOKENS )"
 
 for token in $TOKENS; do

@@ -41,10 +41,11 @@ cat >"$T/bin/gh" <<'EOF'
 echo "gh $*" >>"$GH_STATE/log"
 [ "$1" = release ] || { echo "gh shim: only 'gh release' is supported" >&2; exit 1; }
 sub=$2; shift 2
-tag="" pos="" pattern="" dir="" notes="" flags=""
+tag="" pos="" pattern="" dir="" notes="" flags="" json=""
 while [ $# -gt 0 ]; do
     case $1 in
-        -R | --json | --jq) shift 2 ;;
+        -R | --jq) shift 2 ;;
+        --json) json=$2; shift 2 ;;
         --pattern) pattern=$2; shift 2 ;;
         --dir) dir=$2; shift 2 ;;
         --notes-file) notes=$2; shift 2 ;;
@@ -55,14 +56,22 @@ while [ $# -gt 0 ]; do
 done
 d="$GH_STATE/$tag"
 case $sub in
-    view) [ -d "$d" ] || { echo "release not found" >&2; exit 1; }; cat "$d/isDraft" ;;
+    view)
+        [ -d "$d" ] || { echo "release not found" >&2; exit 1; }
+        if [ "$json" = body ]; then cat "$d/notes.md"; else cat "$d/isDraft"; fi ;;
     create)
         [ -z "${GH_FAIL_CREATE:-}" ] || { echo "gh shim: simulated create failure" >&2; exit 1; }
         [ ! -d "$d" ] || { echo "release exists" >&2; exit 1; }
         mkdir -p "$d"; echo true >"$d/isDraft"; cp "$pos" "$d/"; cp "$notes" "$d/notes.md"; echo "$flags" >"$d/create-flags" ;;
     upload) cp "$pos" "$d/" ;;
     download) [ -f "$d/$pattern" ] || exit 1; cp "$d/$pattern" "$dir/" ;;
-    edit) case $flags in *--draft=false*) echo false >"$d/isDraft" ;; esac; echo "$flags" >"$d/edit-flags" ;;
+    edit)
+        [ -z "$notes" ] || cp "$notes" "$d/notes.md"
+        case $flags in
+            *--draft=false*)
+                [ -z "${GH_FAIL_PUBLISH:-}" ] || { echo "gh shim: simulated publish failure" >&2; exit 1; }
+                echo false >"$d/isDraft"; echo "$flags" >"$d/edit-flags" ;;
+        esac ;;
     *) exit 1 ;;
 esac
 EOF
@@ -252,6 +261,44 @@ rm "$TAP/junk"
 fails "brew style failure stops the bump" "brew style failed" env BREW_STYLE_RC=1 bash -c "cd '$R' && ./scripts/update-tap.sh 1.3.0 $SUM_A"
 eq "  tap untouched after style failure" "1.1.1|1.2.0-beta.1 " "$(tapstate) $(git -C "$TAP" status --porcelain)"
 fails "bad sha256 rejected" "sha256" tap 1.3.0 abc
+fails "same version with another sha256 refused" "different sha256" tap 1.1.1 "$(printf 'b%.0s' $(seq 64))"
+
+section "update-tap.sh: beta cask never below the stable cask (M4)"
+new_sandbox tapbeta
+sed -e 's/@@VERSION@@/0.9.0/' -e "s/@@SHA256@@/$SUM_A/" "$SRC/scripts/templates/snappy@beta.rb.tmpl" >"$TAP/Casks/snappy@beta.rb"
+git -C "$TAP" add -A && git -C "$TAP" commit -q -m "stale beta cask" && git -C "$TAP" push -q origin main
+succeeds "--plan 1.0.0 with no newer version" tap --plan 1.0.0
+has "  beta cask unchanged" "snappy@beta: unchanged" "$OUT"
+succeeds "older-line patch 0.9.1 with a stale existing beta cask 0.9.0" tap 0.9.1 "$SUM_A"
+eq "  neither cask updated" "1.0.0|0.9.0" "$(tapstate)"
+succeeds "newer stable patch 1.0.1 moves both casks" tap 1.0.1 "$SUM_A"
+eq "  both casks at 1.0.1" "1.0.1|1.0.1" "$(tapstate)"
+git -C "$TAP" rm -q Casks/snappy@beta.rb && git -C "$TAP" commit -q -m "drop beta cask" && git -C "$TAP" push -q origin main
+succeeds "--plan 1.0.1 (equal to stable) with the beta cask missing" tap --plan 1.0.1
+has "  missing beta cask not created" "snappy@beta: unchanged (missing)" "$OUT"
+succeeds "--plan 1.0.2 with the beta cask missing" tap --plan 1.0.2
+has "  missing beta cask created above stable" "snappy@beta: new -> 1.0.2" "$OUT"
+
+section "update-tap.sh: a failed tap push is reconciled on retry (M3)"
+cat >"$TAPGIT/hooks/pre-receive" <<'EOF'
+#!/bin/sh
+echo "hook: tap push rejected" >&2; exit 1
+EOF
+chmod +x "$TAPGIT/hooks/pre-receive"
+fails "tap push rejected" "pushing the tap failed" tap 1.1.0 "$SUM_A"
+eq "  remote casks unchanged" "1.0.1|" "$(tapstate)"
+eq "  commit left local (ahead 1)" 1 "$(git -C "$TAP" rev-list --count origin/main..main)"
+fails "retry while the push is still rejected fails loudly" "still stale" tap 1.1.0 "$SUM_A"
+hasnt "  no success claimed" "no cask change" "$OUT"
+rm "$TAPGIT/hooks/pre-receive"
+succeeds "retry pushes the pending commit" tap 1.1.0 "$SUM_A"
+has "  reports the pending push" "pushing 1 pending cask commit" "$OUT"
+eq "  remote casks now at 1.1.0" "1.1.0|1.1.0" "$(tapstate)"
+eq "  local main == origin/main" "$(git -C "$TAPGIT" rev-parse main)" "$(git -C "$TAP" rev-parse main)"
+echo note >"$TAP/NOTE"; git -C "$TAP" add NOTE; git -C "$TAP" commit -q -m "local note"
+fails "a foreign local commit is not pushed" "did not make" tap 1.2.0 "$SUM_A"
+eq "  remote untouched" "1.1.0|1.1.0" "$(tapstate)"
+git -C "$TAP" reset -q --hard origin/main
 
 # =================================================================================
 section "release.sh: betas, dry run, stable promotion"
