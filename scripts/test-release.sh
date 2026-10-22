@@ -470,6 +470,81 @@ succeeds "--resume of a published release is idempotent" rel --resume 1.1.0-beta
 has "  tap: no change" "no cask change" "$OUT"
 
 # =================================================================================
+section "release.sh --resume: dry run is read-only, verified asset, provenance (B1 M1 M2 M3)"
+new_sandbox resume
+merge_feature alpha >/dev/null
+RV=1.1.0-beta.1 RT=v1.1.0-beta.1
+# snap — everything a resume could mutate: origin refs, tap, local tags, gh state.
+snap() {
+    git -C "$O" for-each-ref --format='%(refname) %(objectname)'
+    git -C "$TAPGIT" rev-parse main; git -C "$TAP" rev-parse main
+    g for-each-ref --format='%(refname) %(objectname)' refs/tags
+    (cd "$GH_STATE" && find . -type f ! -name log | sort | while read -r f; do shasum "$f"; done)
+    grep -cE '^gh release (create|edit|upload|delete)' "$GH_STATE/log"
+}
+readonly_run() { # readonly_run <desc> <expect: ok|fail> <pattern> -- runs rel --resume $RV --dry-run
+    local d=$1 want=$2 pat=$3 before
+    before=$(snap)
+    if [ "$want" = ok ]; then succeeds "$d" rel --resume "$RV" --dry-run; else fails "$d" "$pat" rel --resume "$RV" --dry-run; fi
+    [ "$want" = fail ] || has "  says what it would do" "$pat" "$OUT"
+    eq "  read-only (refs, tap, tags, gh state unchanged)" "$before" "$(snap)"
+}
+
+readonly_run "dry-run resume: tag not on origin" fail "not on origin"
+fails "gh fails after the push (tag on origin, no release)" "--resume $RV" env GH_FAIL_CREATE=1 bash -c "cd '$R' && ./scripts/release.sh beta --yes </dev/null"
+readonly_run "dry-run resume: no release yet" ok "gh release create $RT --draft"
+
+g branch -q release/1.0 v1.0.0; g switch -q release/1.0
+echo hotfix >"$R/hotfix"; g add hotfix; g commit -q -m "Direct hotfix on release/1.0"; g push -q origin release/1.0; g switch -q main
+BEFORE=$(snap)
+fails "resume refused by the provenance gate" "Provenance gate FAILED" rel --resume "$RV" --yes
+has "  names the offending commit" "Direct hotfix on release/1.0" "$OUT"
+eq "  nothing created or published" "$BEFORE" "$(snap)"
+readonly_run "dry-run resume also runs the gate" fail "Provenance gate FAILED"
+g push -q origin :release/1.0; g branch -q -D release/1.0
+
+fails "resume interrupted at publish leaves a draft with its asset" "publishing the release failed" env GH_FAIL_PUBLISH=1 bash -c "cd '$R' && ./scripts/release.sh --resume $RV --yes </dev/null"
+eq "  still a draft" true "$(cat "$GH_STATE/$RT/isDraft")"
+GOOD=$(shasum -a 256 "$GH_STATE/$RT/Snappy-$RV.zip" | cut -d' ' -f1)
+has "  draft notes record the asset's SHA-256" "$GOOD" "$(cat "$GH_STATE/$RT/notes.md")"
+readonly_run "dry-run resume: draft with a verified asset" ok "reuse the draft asset (SHA-256 $GOOD"
+
+echo corrupt >"$GH_STATE/$RT/Snappy-$RV.zip"
+readonly_run "dry-run resume: tampered draft asset fails closed" fail "differs from the $GOOD recorded"
+BEFORE=$(snap)
+fails "resume refuses a tampered draft asset" "not publishing" rel --resume "$RV" --yes
+eq "  not published, tap untouched" "$BEFORE" "$(snap)"
+
+FAKE=$(printf 'f%.0s' $(seq 64))
+rm "$GH_STATE/$RT/Snappy-$RV.zip"
+sed -i '' "s/$GOOD/$FAKE/" "$GH_STATE/$RT/notes.md"   # the original build had another checksum
+readonly_run "dry-run resume: draft without asset" ok "rebuild Snappy-$RV.zip"
+cat >"$TAPGIT/hooks/pre-receive" <<'EOF'
+#!/bin/sh
+echo "hook: tap push rejected" >&2; exit 1
+EOF
+chmod +x "$TAPGIT/hooks/pre-receive"
+fails "resume rebuilds the asset, publishes, tap push rejected" "pushing the tap failed" rel --resume "$RV" --yes
+NOTES=$(cat "$GH_STATE/$RT/notes.md")
+has "  notes now record the rebuilt SHA-256" "\`$GOOD\`" "$NOTES"
+hasnt "  old recorded SHA-256 gone" "$FAKE" "$NOTES"
+has "  notes rewritten via gh release edit --notes-file" "gh release edit -R sandbox/snappy $RT --notes-file" "$(cat "$GH_STATE/log")"
+eq "  rebuilt asset uploaded" "$GOOD" "$(shasum -a 256 "$GH_STATE/$RT/Snappy-$RV.zip" | cut -d' ' -f1)"
+eq "  published" false "$(cat "$GH_STATE/$RT/isDraft")"
+eq "  remote tap still stale" "1.0.0|" "$(tapstate)"
+rm "$TAPGIT/hooks/pre-receive"
+
+readonly_run "dry-run resume: published release" ok "skip publishing ($RT is already published"
+g branch -q release/1.0 v1.0.0; g switch -q release/1.0
+echo hotfix2 >"$R/hotfix2"; g add hotfix2; g commit -q -m "Another direct hotfix"; g push -q origin release/1.0; g switch -q main
+succeeds "resume of a published release repairs the tap (no provenance gate needed)" rel --resume "$RV" --yes
+hasnt "  gate not run" "Provenance gate" "$OUT"
+has "  pending tap commit pushed" "pushing 1 pending cask commit" "$OUT"
+eq "  remote tap now has the beta cask" "1.0.0|$RV" "$(tapstate)"
+has "  with the verified SHA-256" "sha256 \"$GOOD\"" "$(git -C "$TAPGIT" show main:Casks/snappy@beta.rb)"
+g push -q origin :release/1.0; g branch -q -D release/1.0
+
+# =================================================================================
 echo
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
