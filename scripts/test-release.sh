@@ -288,17 +288,69 @@ chmod +x "$TAPGIT/hooks/pre-receive"
 fails "tap push rejected" "pushing the tap failed" tap 1.1.0 "$SUM_A"
 eq "  remote casks unchanged" "1.0.1|" "$(tapstate)"
 eq "  commit left local (ahead 1)" 1 "$(git -C "$TAP" rev-list --count origin/main..main)"
+MARK="$TAP/.git/snappy-pending-release"
+has "  marker records the commit" "commit $(git -C "$TAP" rev-parse HEAD)" "$(cat "$MARK" 2>&1)"
 fails "retry while the push is still rejected fails loudly" "still stale" tap 1.1.0 "$SUM_A"
 hasnt "  no success claimed" "no cask change" "$OUT"
+eq "  marker survives a second failing push" "commit $(git -C "$TAP" rev-parse HEAD)" "$(head -n 1 "$MARK" 2>&1)"
 rm "$TAPGIT/hooks/pre-receive"
 succeeds "retry pushes the pending commit" tap 1.1.0 "$SUM_A"
-has "  reports the pending push" "pushing 1 pending cask commit" "$OUT"
+has "  reports the pending push" "pushing the pending cask commit" "$OUT"
 eq "  remote casks now at 1.1.0" "1.1.0|1.1.0" "$(tapstate)"
 eq "  local main == origin/main" "$(git -C "$TAPGIT" rev-parse main)" "$(git -C "$TAP" rev-parse main)"
+eq "  marker cleared after the verified push" no "$([ -e "$MARK" ] && echo yes || echo no)"
 echo note >"$TAP/NOTE"; git -C "$TAP" add NOTE; git -C "$TAP" commit -q -m "local note"
 fails "a foreign local commit is not pushed" "did not make" tap 1.2.0 "$SUM_A"
 eq "  remote untouched" "1.1.0|1.1.0" "$(tapstate)"
 git -C "$TAP" reset -q --hard origin/main
+
+section "update-tap.sh: only a recorded pending commit is pushed (N1)"
+new_sandbox pending
+MARK="$TAP/.git/snappy-pending-release"
+remote_head() { git -C "$TAPGIT" rev-parse main; }
+H0=$(remote_head)
+printf '\n# unrelated local cask work (unreviewed)\n' >>"$TAP/Casks/snappy.rb"
+git -C "$TAP" add Casks/snappy.rb && git -C "$TAP" commit -q -m 'Snappy 1.0.0: snappy'
+fails "hand-made release-shaped cask commit is not pushed" "did not make" tap 0.9.1 "$SUM_A"
+has "  explains manual recovery" "reset --hard origin/main" "$OUT"
+eq "  remote untouched" "$H0" "$(remote_head)"
+git -C "$TAP" reset -q --hard origin/main
+echo x >"$TAP/UNRELATED"; git -C "$TAP" add UNRELATED; git -C "$TAP" commit -q -m 'Snappy 1.0.0: snappy'
+git -C "$TAP" rm -q UNRELATED; git -C "$TAP" commit -q -m 'Snappy 1.0.0: snappy@beta'
+fails "net-zero release-shaped history is not pushed" "did not make" tap 0.9.1 "$SUM_A"
+eq "  remote untouched" "$H0" "$(remote_head)"
+git -C "$TAP" reset -q --hard origin/main
+cat >"$TAPGIT/hooks/pre-receive" <<'HOOK'
+#!/bin/sh
+exit 1
+HOOK
+chmod +x "$TAPGIT/hooks/pre-receive"
+fails "push rejected leaves a pending commit" "pushing the tap failed" tap 1.1.0 "$SUM_A"
+rm "$TAPGIT/hooks/pre-receive"
+P=$(git -C "$TAP" rev-parse HEAD)
+cp "$MARK" "$TAP/.git/marker.bak"
+git -C "$TAP" commit -q --amend -m "Snappy 1.1.0: snappy snappy@beta (amended)"
+fails "amended pending commit refused" "did not make" tap 1.1.0 "$SUM_A"
+has "  stale marker warned about" "stale tap marker" "$OUT"
+eq "  stale marker removed" no "$([ -e "$MARK" ] && echo yes || echo no)"
+eq "  remote untouched" "$H0" "$(remote_head)"
+git -C "$TAP" reset -q --hard "$P"
+sed 's/^\(file Casks\/snappy.rb \).*/\1'"$(printf '0%.0s' $(seq 64))"'/' "$TAP/.git/marker.bak" >"$MARK"
+fails "pending commit with a changed cask hash refused" "no longer matches" tap 1.1.0 "$SUM_A"
+eq "  remote untouched" "$H0" "$(remote_head)"
+git -C "$TAP" reset -q --hard origin/main
+printf 'commit %s\nversion 1.1.0\nfile Casks/snappy.rb %s\n' "$P" "$SUM_A" >"$MARK"
+succeeds "marker for a commit no longer on main is ignored" tap --plan 1.1.0
+succeeds "  ... and a normal run proceeds" tap 1.1.0 "$SUM_A"
+has "  with a stale-marker warning" "stale tap marker" "$OUT"
+eq "  casks published" "1.1.0|1.1.0" "$(tapstate)"
+eq "  no marker left after a verified push" no "$([ -e "$MARK" ] && echo yes || echo no)"
+git -C "$TAP" commit -q --allow-empty -m "Snappy 1.2.0: snappy"
+printf 'commit %s\nversion 1.2.0\nfile Casks/snappy.rb %s\n' "$(git -C "$TAP" rev-parse HEAD^)" "$SUM_A" >"$MARK"
+H1=$(remote_head)
+fails "extra commit on top of a recorded one refused" "did not make" tap 1.2.0 "$SUM_A"
+eq "  remote untouched" "$H1" "$(remote_head)"
+git -C "$TAP" reset -q --hard origin/main; rm -f "$MARK"
 
 # =================================================================================
 section "release.sh: betas, dry run, stable promotion"
@@ -539,7 +591,7 @@ g branch -q release/1.0 v1.0.0; g switch -q release/1.0
 echo hotfix2 >"$R/hotfix2"; g add hotfix2; g commit -q -m "Another direct hotfix"; g push -q origin release/1.0; g switch -q main
 succeeds "resume of a published release repairs the tap (no provenance gate needed)" rel --resume "$RV" --yes
 hasnt "  gate not run" "Provenance gate" "$OUT"
-has "  pending tap commit pushed" "pushing 1 pending cask commit" "$OUT"
+has "  pending tap commit pushed" "pushing the pending cask commit" "$OUT"
 eq "  remote tap now has the beta cask" "1.0.0|$RV" "$(tapstate)"
 has "  with the verified SHA-256" "sha256 \"$GOOD\"" "$(git -C "$TAPGIT" show main:Casks/snappy@beta.rb)"
 g push -q origin :release/1.0; g branch -q -D release/1.0

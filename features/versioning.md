@@ -88,7 +88,7 @@ release/1.5 (created lazily)                             └──●(pick of fi
 | `./scripts/release.sh <version> ["headline"]` | Explicit version (`1.5.1`, `1.6.0-beta.1`), validated by the same rules (must be exactly the next number) |
 | `./scripts/release.sh --resume <version> [--dry-run]` | Finish a release whose tag is already on origin (see recovery below) |
 | `./scripts/backport.sh <X.Y> <merge-sha>... [--push]` | Create `release/X.Y` from the highest stable `vX.Y.*` if missing (pushed with `-u` only with `--push`), cherry-pick each merge (must be an ancestor of `origin/main`) in a temp worktree, run the tests. No tag, no publish — ready for `release.sh patch`. Conflicts abort cleanly with instructions |
-| `./scripts/update-tap.sh <version> <sha256>` | Render and push the cask(s) in the tap (called by `release.sh`; usable by hand). First pushes its own pending `Snappy <version>` commits left by a failed push; only reports success once `origin/main` carries the casks |
+| `./scripts/update-tap.sh <version> <sha256>` | Render and push the cask(s) in the tap (called by `release.sh`; usable by hand). A commit it made whose push failed is recorded in `.git/snappy-pending-release` (sha + version + cask SHA-256s) and pushed by the next run only if it is still exactly `HEAD`, the sole commit ahead, with unchanged casks; any other unpushed tap work (whatever its subject) stops with manual-recovery steps, nothing pushed. Only reports success once `origin/main` carries the casks |
 | `./scripts/update-tap.sh --plan <version>` | Print which casks would change; touches nothing |
 | `/bin/bash scripts/test-release.sh` | Sandbox suite for all release scripts (throwaway repos, `gh`/`brew` shims, no network); `KEEP=1` keeps the sandbox |
 
@@ -144,7 +144,7 @@ Environment overrides:
 | 1–7 (before the push) | nothing remote; the local tag is deleted by a trap | fix the cause, rerun |
 | 8 push | atomic: branch and tag both pushed or neither | fix (e.g. fetch, auth), rerun |
 | 9–11 (draft / verify / publish) | tag on the remote, release missing or still a draft | `release.sh --resume <version>` (the script prints the exact commands) — reruns the provenance gate; publishes a draft asset only if its SHA-256 matches the one recorded in the draft notes (mismatch → stop; delete the asset and resume); a missing asset is rebuilt, its SHA-256 written into the notes, and the upload re-verified |
-| 12 tap | release published, cask stale | `update-tap.sh <version> <sha256>` or `--resume <version>` (tap repair only, no gate) |
+| 12 tap | release published, cask stale | `update-tap.sh <version> <sha256>` or `--resume <version>` (tap repair only, no gate); pushes only the recorded pending commit — amended/extra/hand-made tap commits need a human (`git -C <tap> log --stat origin/main..main`, then push or `reset --hard origin/main`) |
 | a bug found **after** publish | public | **never retag** — ship the next number (`beta.N+1`, `X.Y.Z+1`) |
 
 ## Release notes
@@ -261,7 +261,8 @@ When `v1.6.0` ships, its notes mark the fix "(also in 1.5.1)", and
   `version.sh` picks the highest tag at HEAD.
   Review fixes: `--resume --dry-run` is read-only; resume reruns the provenance
   gate and verifies the draft asset against the SHA-256 in its notes;
-  `update-tap.sh` pushes a pending commit from a failed push and verifies
+  `update-tap.sh` pushes only its own recorded pending commit (marker in the
+  tap's git dir, never by subject) from a failed push and verifies
   `origin/main`; `snappy@beta` never moves below the stable cask.
 - **2026-10-22** — Binary releases: `package.sh`, GitHub Release in `release.sh`, Homebrew cask in `tefa-m/homebrew-snappy`.
 - **2026-10-11** — Introduced: `scripts/version.sh`, `release.sh`, bundle/verify/

@@ -10,8 +10,8 @@
 #                         stable) is above both its version and the stable cask's
 # So a patch to an older line updates neither cask, a stale beta cask is never
 # moved below the stable one, and a newer stable moves both.
-# Pending local "Snappy <version>" cask commits from a run whose push failed are
-# pushed first; success is only reported once origin/main has the casks. Casks are rendered from
+# A commit this script made whose push failed (recorded by a marker in the tap's
+# git dir) is pushed first if untouched; any other unpushed local work fails. Success is only reported once origin/main has the casks. Casks are rendered from
 # scripts/templates/*.rb.tmpl. The tap is the clone at SNAPPY_TAP_DIR (default:
 # ../homebrew-snappy next to the main checkout); it must be clean and on main.
 # Never touches Homebrew's own clone of the tap (under brew --repository).
@@ -75,16 +75,58 @@ fi
 command -v brew >/dev/null || rl_die "brew is not installed"
 git -C "$TAP" pull --ff-only --quiet || rl_die "git pull --ff-only in $TAP failed"
 
-# A previous run may have committed but failed to push: push those commits
-# (only update-tap's own cask commits), anything else is for a human.
+# A run that committed but failed to push leaves a marker in the tap's git dir:
+#   commit <sha> / version <v> / file <path> <sha256 of the rendered cask>
+# Only that exact commit (HEAD, sole commit ahead, unchanged casks) is pushed on
+# a later run; any other local-ahead state is for a human. Subjects prove nothing.
+MARKER="$(git -C "$TAP" rev-parse --absolute-git-dir)/snappy-pending-release"
+file_sum() { shasum -a 256 "$1" | cut -d' ' -f1; }
+write_marker() { # write_marker <file>... — records HEAD as this run's pending commit
+    local f
+    {
+        echo "commit $(git -C "$TAP" rev-parse HEAD)"
+        echo "version $V"
+        for f in "$@"; do echo "file $f $(file_sum "$TAP/$f")"; done
+    } >"$MARKER.tmp" && mv "$MARKER.tmp" "$MARKER"
+}
+manual_recovery() {
+    rl_die "tap main is $AHEAD commit(s) ahead of origin/main with changes update-tap.sh did not make (or no longer recognizes): $1
+  nothing was pushed. Inspect: git -C '$TAP' log --stat origin/main..main
+  then push them by hand after review, or drop them: git -C '$TAP' reset --hard origin/main
+  (and rm -f '$MARKER' if present), then re-run"
+}
+
 AHEAD=$(git -C "$TAP" rev-list --count origin/main..main)
+PENDING=""
+if [ -f "$MARKER" ]; then
+    PENDING=$(sed -n 's/^commit \([0-9a-f]\{40,64\}\)$/\1/p' "$MARKER" | head -n 1)
+    if [ -z "$PENDING" ] || ! git -C "$TAP" merge-base --is-ancestor "$PENDING" main 2>/dev/null; then
+        echo "WARNING: ignoring stale tap marker (its commit ${PENDING:-?} is not on main); removed $MARKER" >&2
+        rm -f "$MARKER"; PENDING=""
+    elif git -C "$TAP" merge-base --is-ancestor "$PENDING" origin/main; then
+        echo "Tap: pending commit ${PENDING:0:12} is already on origin/main; marker removed" >&2
+        rm -f "$MARKER"; PENDING=""
+    fi
+fi
 if [ "$AHEAD" != 0 ]; then
-    OTHER=$(git -C "$TAP" log --format='%s' origin/main..main | grep -v '^Snappy [0-9][^ ]*: ' || true)
-    FOREIGN=$(git -C "$TAP" diff --name-only origin/main main | grep -v -x -e 'Casks/snappy.rb' -e 'Casks/snappy@beta.rb' || true)
-    [ -z "$OTHER$FOREIGN" ] ||
-        rl_die "tap main is $AHEAD commit(s) ahead of origin/main with changes update-tap.sh did not make — push or drop them by hand ($TAP)"
-    echo "Tap: pushing $AHEAD pending cask commit(s) from an earlier run"
-    git -C "$TAP" push --quiet origin main || rl_die "pushing the pending tap commit(s) failed — origin/main is still stale; fix and re-run"
+    [ -n "$PENDING" ] || manual_recovery "no pending-commit marker from an earlier run"
+    [ "$AHEAD" = 1 ] && [ "$(git -C "$TAP" rev-parse HEAD)" = "$PENDING" ] ||
+        manual_recovery "main is not exactly the recorded pending commit ${PENDING:0:12}"
+    P_FILES=$(sed -n 's/^file \([^ ]*\) [0-9a-f]\{64\}$/\1/p' "$MARKER")
+    [ -n "$P_FILES" ] || manual_recovery "the marker lists no cask files"
+    [ "$(git -C "$TAP" diff --name-only origin/main main | sort)" = "$(printf '%s\n' "$P_FILES" | sort)" ] ||
+        manual_recovery "the pending commit changes other files than the recorded casks"
+    while read -r _ f s; do
+        case $f in Casks/snappy.rb | Casks/snappy@beta.rb) ;; *) manual_recovery "the marker lists a non-cask file $f" ;; esac
+        [ -f "$TAP/$f" ] && [ "$(file_sum "$TAP/$f")" = "$s" ] ||
+            manual_recovery "$f no longer matches the rendered cask recorded for the pending commit"
+    done <<<"$(grep '^file ' "$MARKER")"
+    echo "Tap: pushing the pending cask commit ${PENDING:0:12} ($(sed -n 's/^version //p' "$MARKER")) from an earlier run"
+    git -C "$TAP" push --quiet origin main || rl_die "pushing the pending tap commit failed — origin/main is still stale; fix and re-run"
+    git -C "$TAP" fetch --quiet origin || rl_die "git fetch in $TAP failed — cannot verify the pending push"
+    [ "$(git -C "$TAP" rev-parse origin/main)" = "$PENDING" ] ||
+        rl_die "tap origin/main is not the pending commit after the push — not verified"
+    rm -f "$MARKER"
 fi
 
 # verify_remote <file>... — origin/main must equal local main, and every given
@@ -131,10 +173,13 @@ fi
 # shellcheck disable=SC2086
 git -C "$TAP" add $FILES
 git -C "$TAP" commit --quiet -m "Snappy $V:$TOKENS"
+# shellcheck disable=SC2086
+write_marker $FILES
 git -C "$TAP" push --quiet origin main ||
     rl_die "pushing the tap failed — the commit is local in $TAP; re-run this command (or --resume) to push it"
 # shellcheck disable=SC2086
 verify_remote $FILES
+rm -f "$MARKER"
 echo "Tap: committed and pushed Snappy $V ($TOKENS )"
 
 for token in $TOKENS; do
