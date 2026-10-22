@@ -3,8 +3,10 @@
 #
 # Refuses unless on a clean, up-to-date `main` with a green test gate and an
 # unused tag; then creates the annotated tag v<version> and pushes main + tag.
-# The tag message holds the release notes (no CHANGELOG.md). Bump rules and the
-# whole flow: features/versioning.md.
+# The tag message holds the release notes (no CHANGELOG.md). Then it builds the
+# ad-hoc-signed zip (scripts/package.sh), publishes it as a GitHub Release and
+# prints the Homebrew cask values. Bump rules and the whole flow:
+# features/versioning.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -36,4 +38,11 @@ git tag -a "$TAG" -m "Snappy $VERSION
 
 $NOTES"
 git push origin main "$TAG"
+echo "Tagged and pushed $TAG"
+
+command -v gh >/dev/null || fail "gh not installed — tag is pushed; run scripts/package.sh and create the release by hand"
+./scripts/package.sh
+ZIP="dist/Snappy-$VERSION.zip"
+gh release create "$TAG" "$ZIP" --verify-tag --title "Snappy $VERSION" --notes "$NOTES"
 echo "Released $TAG"
+echo "Cask:  version \"$VERSION\"   sha256 \"$(shasum -a 256 "$ZIP" | cut -d' ' -f1)\""

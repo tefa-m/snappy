@@ -37,6 +37,21 @@ OCR runs on your Mac.
 
 ## Install
 
+### Homebrew (prebuilt, universal binary)
+
+```sh
+brew install --cask tefa-m/snappy/snappy
+```
+
+The release is **ad-hoc signed, not notarized**, so Gatekeeper blocks the first launch. The
+cask removes the quarantine flag for you; if you downloaded the zip from the
+[Releases page](https://github.com/tefa-m/snappy/releases) yourself, run
+`xattr -dr com.apple.quarantine /Applications/Snappy.app` once. Update with
+`brew upgrade --cask snappy`. Every update re-signs the app, so macOS asks for Screen Recording
+permission again.
+
+### From source
+
 ```sh
 git clone https://github.com/tefa-m/snappy.git
 cd snappy
