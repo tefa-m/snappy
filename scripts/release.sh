@@ -24,6 +24,9 @@
 # already published, and only publishes an asset whose SHA-256 matches the one
 # recorded in the draft notes (a rebuilt asset rewrites that record first).
 # A published version is never re-tagged: ship the next.
+# The notes group the subjects by `<type>: <summary>` (feat/fix/perf shown,
+# docs/test/chore/build/refactor hidden); the plan warns about any subject in
+# the range that does not follow it (listed under "Other changes", no abort).
 #
 # Environment: SNAPPY_RELEASE_ALLOW_UNBETAED=1 (stable without a beta on the same
 # commit), SNAPPY_RELEASE_TEST_CMD (test gate, default ./scripts/test.sh),
@@ -226,6 +229,15 @@ if [ -n "$LOCAL_BR" ] && [ "$LOCAL_BR" != "$COMMIT" ]; then
     echo "  note      your local $BRANCH differs from origin/$BRANCH — only origin/$BRANCH is released"
 fi
 printf '\n--- notes preview ---\n%s\n---------------------\n\n' "$BODY"
+UNCONVENTIONAL=$(rl_unconventional "$V" "$COMMIT")
+if [ -n "$UNCONVENTIONAL" ]; then
+    {
+        echo "WARNING: these subjects do not follow '<type>: <summary>' (feat|fix|perf|docs|test|chore|build|refactor)"
+        echo "         and are listed verbatim under \"Other changes\":"
+        printf '%s\n' "$UNCONVENTIONAL" | sed 's/^/           /'
+        echo
+    } >&2
+fi
 if [ "${TAP_BAD:-0}" = 1 ]; then
     [ "$DRY_RUN" = 1 ] && echo "WARNING: the tap is not ready (see above); a real release would stop here." >&2 ||
         die "the tap is not ready (see above) — fix it before releasing"

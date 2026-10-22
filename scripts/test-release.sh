@@ -140,13 +140,14 @@ new_sandbox() {
     mkdir -p "$GH_STATE"; : >"$GH_STATE/log"; : >"$BREW_LOG"
 }
 g() { git -C "$R" "$@"; }
-# merge_feature <name> — a --no-ff feature merge on main, pushed; prints its sha.
+# merge_feature <name> [subject] — a --no-ff feature merge on main, pushed;
+# prints its sha. Default subject: the legacy "Merge feat/<name>: <name>".
 merge_feature() {
     g switch -q main
     g switch -q -c "feat/$1"
     echo "$1" >"$R/$1.txt"; g add "$1.txt"; g commit -q -m "Add $1"
     g switch -q main
-    g merge -q --no-ff -m "Merge feat/$1: $1" "feat/$1"
+    g merge -q --no-ff -m "${2:-Merge feat/$1: $1}" "feat/$1"
     g branch -q -D "feat/$1"
     g push -q origin main
     g rev-parse HEAD
@@ -157,6 +158,10 @@ remote_tag() { git -C "$O" rev-parse -q --verify "refs/tags/$1" >/dev/null; }
 local_tag() { g rev-parse -q --verify "refs/tags/$1" >/dev/null; }
 cask_ver() { git -C "$TAPGIT" show "main:Casks/$1.rb" 2>/dev/null | sed -n 's/^  version "\(.*\)"$/\1/p'; }
 lib() { (cd "$R" && source scripts/lib/release-lib.sh && "$@"); }
+# notes_sec <heading> <notes> — the non-blank lines under "## <heading>".
+notes_sec() { printf '%s\n' "$2" | awk -v h="## $1" '$0 == h { on = 1; next } on && (/^## / || /^---/) { exit } on && NF { print }'; }
+NL=$'\n'
+WARN_UNCONV="do not follow '<type>: <summary>'"
 
 # =================================================================================
 section "versions: parse, compare, tag order"
@@ -419,12 +424,13 @@ eq "  shared lock released" released "$(lockgone)"
 section "release.sh: betas, dry run, stable promotion"
 new_sandbox flow
 fails "beta with nothing new since v1.0.0" "nothing new" rel beta --yes
-A=$(merge_feature alpha)
+A=$(merge_feature alpha "feat: alpha")
 : >"$GH_STATE/log"; : >"$BREW_LOG"
 TAP_HEAD=$(git -C "$TAPGIT" rev-parse main)
 succeeds "beta --dry-run" rel beta --dry-run
 has "  plan names 1.1.0-beta.1" "1.1.0-beta.1  (beta)" "$OUT"
-has "  notes preview lists the merge" "- Merge feat/alpha: alpha" "$OUT"
+eq "  notes preview: feat under Features, prefix stripped" "- alpha" "$(notes_sec Features "$OUT")"
+hasnt "  all subjects conventional: no warning" "$WARN_UNCONV" "$OUT"
 eq "  dry run: no local tag" no "$(local_tag v1.1.0-beta.1 && echo yes || echo no)"
 eq "  dry run: no remote tag" no "$(remote_tag v1.1.0-beta.1 && echo yes || echo no)"
 eq "  dry run: gh never called" "" "$(cat "$GH_STATE/log")"
@@ -444,7 +450,9 @@ has "  created as draft" "--draft" "$(cat "$GH_STATE/v1.1.0-beta.1/create-flags"
 has "  published as pre-release" "--prerelease" "$(cat "$GH_STATE/v1.1.0-beta.1/edit-flags")"
 has "  asset downloaded back for verification" "--pattern Snappy-1.1.0-beta.1.zip" "$(cat "$GH_STATE/log")"
 NOTES=$(cat "$GH_STATE/v1.1.0-beta.1/notes.md")
-has "  notes: change list" "- Merge feat/alpha: alpha" "$NOTES"
+eq "  notes: Features" "- alpha" "$(notes_sec Features "$NOTES")"
+hasnt "  notes: no Other changes" "## Other changes" "$NOTES"
+hasnt "  notes: no type prefix" "feat:" "$NOTES"
 has "  notes: compare link" "https://github.com/sandbox/snappy/compare/v1.0.0...v1.1.0-beta.1" "$NOTES"
 has "  notes: beta install" "brew install --cask tefa-m/snappy/snappy@beta" "$NOTES"
 has "  notes: pre-release warning" "Pre-release, may be unstable" "$NOTES"
@@ -452,14 +460,16 @@ has "  notes: sha256" "$(shasum -a 256 "$GH_STATE/v1.1.0-beta.1/Snappy-1.1.0-bet
 eq "  tap: beta cask created, stable untouched" "1.0.0|1.1.0-beta.1" "$(tapstate)"
 fails "same version again refused" "already exists" rel 1.1.0-beta.1 --yes
 
-B=$(merge_feature bravo)
+B=$(merge_feature bravo "fix: bravo")
 fails "beta major while the 1.1.0 train is open" "train v1.1.0 is open" rel beta major --dry-run
 fails "explicit beta must be the next number" "beta.2, not beta.5" rel 1.1.0-beta.5 --dry-run
 fails "explicit beta.0 is invalid" "usage" rel 1.1.0-beta.0 --dry-run
 succeeds "beta minor -> next in the open train" rel beta minor --yes
 eq "  v1.1.0-beta.2 on origin" yes "$(remote_tag v1.1.0-beta.2 && echo yes || echo no)"
 has "  notes since the previous beta only" "compare/v1.1.0-beta.1...v1.1.0-beta.2" "$(cat "$GH_STATE/v1.1.0-beta.2/notes.md")"
-hasnt "  notes exclude the previous beta's changes" "feat/alpha" "$(cat "$GH_STATE/v1.1.0-beta.2/notes.md")"
+hasnt "  notes exclude the previous beta's changes" "alpha" "$(cat "$GH_STATE/v1.1.0-beta.2/notes.md")"
+eq "  notes: fix under Fixes" "- bravo" "$(notes_sec Fixes "$(cat "$GH_STATE/v1.1.0-beta.2/notes.md")")"
+hasnt "  notes: no empty Features group" "## Features" "$(cat "$GH_STATE/v1.1.0-beta.2/notes.md")"
 eq "  open train detected" 1.1.0 "$(lib rl_open_train)"
 
 C=$(merge_feature charlie)
@@ -467,14 +477,18 @@ fails "stable refused: origin/main is not the latest beta's commit" "is not the 
 succeeds "stable allowed with SNAPPY_RELEASE_ALLOW_UNBETAED=1 (dry run)" env SNAPPY_RELEASE_ALLOW_UNBETAED=1 bash -c "cd '$R' && ./scripts/release.sh stable --dry-run </dev/null"
 has "  plans 1.1.0" "1.1.0  (stable)" "$OUT"
 succeeds "beta -> v1.1.0-beta.3" rel beta --yes
+has "  warns about the unconventional subject" "$WARN_UNCONV" "$OUT"
+has "  ... and names it" "           Merge feat/charlie: charlie" "$OUT"
+eq "  release still published (warning only)" false "$(cat "$GH_STATE/v1.1.0-beta.3/isDraft")"
+eq "  unconventional subject kept verbatim under Other changes" "- Merge feat/charlie: charlie" "$(notes_sec "Other changes" "$(cat "$GH_STATE/v1.1.0-beta.3/notes.md")")"
 succeeds "stable -> v1.1.0 (on the latest beta's commit)" rel stable "Big headline" --yes
 eq "  stable tag on the beta.3 commit" "$(g rev-parse 'v1.1.0-beta.3^{commit}')" "$(git -C "$O" rev-parse 'v1.1.0^{commit}')"
 has "  published --latest" "--latest" "$(cat "$GH_STATE/v1.1.0/edit-flags")"
 hasnt "  not a pre-release" "--prerelease" "$(cat "$GH_STATE/v1.1.0/edit-flags")"
 NOTES=$(cat "$GH_STATE/v1.1.0/notes.md")
 has "  notes: headline" "Big headline" "$NOTES"
-has "  notes: all merges since v1.0.0" "- Merge feat/charlie: charlie" "$NOTES"
-has "  notes: alpha too" "- Merge feat/alpha: alpha" "$NOTES"
+eq "  notes: all merges since v1.0.0, grouped" "## Features|- alpha|## Fixes|- bravo|## Other changes|- Merge feat/charlie: charlie" \
+    "$(printf '%s\n' "$NOTES" | sed -n '/^## Features/,/^## Pre-releases/p' | grep -v '^## Pre-releases' | grep . | tr '\n' '|' | sed 's/|$//')"
 has "  notes: pre-release links" "- [v1.1.0-beta.1](https://github.com/sandbox/snappy/releases/tag/v1.1.0-beta.1)" "$NOTES"
 has "  notes: beta.3 listed" "v1.1.0-beta.3" "$NOTES"
 has "  notes: compare from the last stable" "compare/v1.0.0...v1.1.0" "$NOTES"
@@ -487,14 +501,15 @@ fails "stable with no open train" "no open beta train" rel stable --yes
 # =================================================================================
 section "backport.sh + patch releases + provenance gate"
 fails "patch with no release branch" "release branches" rel patch --yes
-D=$(merge_feature delta-fix)
+D=$(merge_feature delta-fix "fix: delta")
+H=$(merge_feature hotel-chore "chore: hotel")
 g switch -q -c side; echo s >"$R/s"; g add s; g commit -q -m side; SIDE=$(g rev-parse HEAD); g switch -q main
 fails "backport refuses a commit not on origin/main" "is not on origin/main" bp 1.1 "$SIDE"
-succeeds "backport 1.1 <merge> (no push)" bp 1.1 "$D"
+succeeds "backport 1.1 <merge> <merge> (no push)" bp 1.1 "$D" "$H"
 has "  next steps mention release.sh patch" "release.sh patch" "$OUT"
-eq "  release/1.1 created from v1.1.0" "$(g rev-parse v1.1.0^{commit})" "$(g rev-parse release/1.1~1)"
+eq "  release/1.1 created from v1.1.0" "$(g rev-parse v1.1.0^{commit})" "$(g rev-parse release/1.1~2)"
 eq "  not pushed without --push" no "$(git -C "$O" rev-parse -q --verify refs/heads/release/1.1 >/dev/null && echo yes || echo no)"
-has "  pick carries the -x trailer" "(cherry picked from commit $D)" "$(g log -1 --format=%B release/1.1)"
+has "  pick carries the -x trailer" "(cherry picked from commit $D)" "$(g log -1 --format=%B release/1.1~1)"
 eq "  user's checkout untouched" main "$(g branch --show-current)"
 fails "patch before the branch is pushed" "origin/release/1.1 does not exist" rel 1.1.1 --dry-run
 g push -q -u origin release/1.1
@@ -505,22 +520,26 @@ g switch -q main
 eq "  v1.1.1 on release/1.1" "$(g rev-parse origin/release/1.1)" "$(git -C "$O" rev-parse 'v1.1.1^{commit}')"
 eq "  v1.1.1 not reachable from main" no "$(g merge-base --is-ancestor v1.1.1 origin/main && echo yes || echo no)"
 has "  published --latest (highest stable)" "--latest" "$(cat "$GH_STATE/v1.1.1/edit-flags")"
-has "  patch notes: picked subject" "- Merge feat/delta-fix: delta-fix" "$(cat "$GH_STATE/v1.1.1/notes.md")"
+NOTES=$(cat "$GH_STATE/v1.1.1/notes.md")
+eq "  patch notes (--no-merges picks): Fixes" "- delta" "$(notes_sec Fixes "$NOTES")"
+hasnt "  patch notes: hidden chore pick" "hotel" "$NOTES"
 has "  patch notes: compare link" "compare/v1.1.0...v1.1.1" "$(cat "$GH_STATE/v1.1.1/notes.md")"
 eq "  tap: both casks at 1.1.1" "1.1.1|1.1.1" "$(tapstate)"
 fails "patch with nothing new on release/1.1" "nothing new" rel 1.1.2 --dry-run
 fails "patch of a line without a branch" "origin/release/1.2 does not exist" rel 1.2.1 --dry-run
 
-E=$(merge_feature echo)
+E=$(merge_feature echo "feat: echo")
+merge_feature india-docs "docs: india" >/dev/null
 succeeds "beta after a patch: new train from the latest stable -> 1.2.0-beta.1" rel beta --yes
 eq "  v1.2.0-beta.1 on origin" yes "$(remote_tag v1.2.0-beta.1 && echo yes || echo no)"
 has "  beta.1 notes since the reachable stable v1.1.0" "compare/v1.1.0...v1.2.0-beta.1" "$(cat "$GH_STATE/v1.2.0-beta.1/notes.md")"
 succeeds "stable -> v1.2.0" rel stable --yes
 NOTES=$(cat "$GH_STATE/v1.2.0/notes.md")
-CHANGES=$(printf '%s\n' "$NOTES" | sed -n '/^## Changes/,/^## /p')
-has "  notes: new merge listed" "- Merge feat/echo: echo" "$CHANGES"
-hasnt "  notes dedupe: back-ported fix not in Changes" "delta-fix" "$CHANGES"
-has "  notes dedupe: marked (also in 1.1.1)" "- Merge feat/delta-fix: delta-fix (also in 1.1.1)" "$NOTES"
+eq "  notes: new merge listed" "- echo" "$(notes_sec Features "$NOTES")"
+hasnt "  notes dedupe: back-ported fix not in Fixes" "## Fixes" "$NOTES"
+hasnt "  notes: hidden docs merge" "india" "$NOTES"
+eq "  notes dedupe: marked (also in 1.1.1), prefix stripped, hidden chore dropped" "- delta (also in 1.1.1)" \
+    "$(notes_sec "Already shipped in patch releases" "$NOTES")"
 eq "  tap: both casks at 1.2.0" "1.2.0|1.2.0" "$(tapstate)"
 
 F=$(merge_feature foxtrot-fix)
@@ -528,6 +547,7 @@ succeeds "backport 1.1 <merge> --push" bp 1.1 "$F" --push
 eq "  pushed" "$(g rev-parse release/1.1)" "$(git -C "$O" rev-parse refs/heads/release/1.1)"
 succeeds "patch 1.1.2 to an older line" rel 1.1.2 --yes
 has "  published --latest=false" "--latest=false" "$(cat "$GH_STATE/v1.1.2/edit-flags")"
+eq "  legacy pick subject under Other changes" "- Merge feat/foxtrot-fix: foxtrot-fix" "$(notes_sec "Other changes" "$(cat "$GH_STATE/v1.1.2/notes.md")")"
 eq "  tap: neither cask touched" "1.2.0|1.2.0" "$(tapstate)"
 
 BR_BEFORE=$(g rev-parse release/1.1)
@@ -658,6 +678,59 @@ has "  pending tap commit pushed" "pushing the pending cask commit" "$OUT"
 eq "  remote tap now has the beta cask" "1.0.0|$RV" "$(tapstate)"
 has "  with the verified SHA-256" "sha256 \"$GOOD\"" "$(git -C "$TAPGIT" show main:Casks/snappy@beta.rb)"
 g push -q origin :release/1.0; g branch -q -D release/1.0
+
+# =================================================================================
+section "release notes: subject convention, grouping, hidden types"
+(
+    source "$SRC/scripts/lib/release-lib.sh"
+    while IFS='|' read -r subj want; do
+        eq "parse '$subj'" "$want" "$(rl_parse_subject "$subj")"
+    done <<'EOF'
+feat: Pin windows remember their size|feat Pin windows remember their size
+fix: fix: double prefix|fix fix: double prefix
+perf: faster OCR|perf faster OCR
+docs: shortcuts table|hidden shortcuts table
+test: more cases|hidden more cases
+chore: bump|hidden bump
+build: universal zip|hidden universal zip
+refactor: split module|hidden split module
+Merge feat/x: legacy subject|other Merge feat/x: legacy subject
+feat(ui): scopes are not supported|other feat(ui): scopes are not supported
+feat!: no bang either|other feat!: no bang either
+Feat: case matters|other Feat: case matters
+feat:no space|other feat:no space
+feature: unknown type|other feature: unknown type
+EOF
+    eq "grouped: order Features, Fixes, Performance, Other; hidden dropped; empty groups omitted" \
+        "## Features${NL}${NL}- a${NL}- c${NL}${NL}## Fixes${NL}${NL}- f${NL}${NL}## Performance${NL}${NL}- p${NL}${NL}## Other changes${NL}${NL}- Merge branch 'x'" \
+        "$(printf '%s\n' "perf: p" "feat: a" "docs: d" "Merge branch 'x'" "fix: f" "" "feat: c" "chore: h" | rl_notes_sections)"
+    eq "only Fixes" "## Fixes${NL}${NL}- f" "$(printf 'fix: f\n' | rl_notes_sections)"
+    eq "all hidden -> no user-facing changes" "## Changes${NL}${NL}- (no user-facing changes)" \
+        "$(printf '%s\n' "docs: d" "test: t" | rl_notes_sections)"
+    eq "empty -> no user-facing changes" "## Changes${NL}${NL}- (no user-facing changes)" "$(printf '' | rl_notes_sections)"
+    echo "PASS=$PASS FAIL=$FAIL" >"$T/sub.counts"
+)
+. "$T/sub.counts"
+
+new_sandbox notes
+merge_feature kilo "docs: kilo" >/dev/null
+merge_feature lima "test: lima" >/dev/null
+succeeds "beta --dry-run with hidden types only" rel beta --dry-run
+eq "  no user-facing changes" "- (no user-facing changes)" "$(notes_sec Changes "$OUT")"
+hasnt "  hidden subjects absent" "kilo" "$(printf '%s\n' "$OUT" | sed -n '/notes preview/,/^-----/p')"
+hasnt "  conventional hidden types: no warning" "$WARN_UNCONV" "$OUT"
+merge_feature mike "perf: mike" >/dev/null
+merge_feature november >/dev/null
+merge_feature oscar "feat: oscar" >/dev/null
+BODY=$(lib rl_notes_body 1.1.0-beta.1 HEAD "Headline")
+eq "  body: headline, then groups in order" "Headline|## Features|- oscar|## Performance|- mike|## Other changes|- Merge feat/november: november" \
+    "$(printf '%s\n' "$BODY" | grep . | tr '\n' '|' | sed 's/|$//')"
+eq "  rl_unconventional lists only the legacy subject" "Merge feat/november: november" "$(lib rl_unconventional 1.1.0-beta.1 HEAD)"
+succeeds "beta --dry-run with a legacy subject" rel beta --dry-run
+has "  warning printed" "WARNING: these subjects $WARN_UNCONV" "$OUT"
+has "  warning names the subject" "           Merge feat/november: november" "$OUT"
+hasnt "  warning omits conventional subjects" "           perf: mike" "$OUT"
+has "  dry run still completes" "DRY RUN complete" "$OUT"
 
 # =================================================================================
 echo
