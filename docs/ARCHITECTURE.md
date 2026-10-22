@@ -241,6 +241,8 @@ scripts/                         bundle.sh · install.sh · test.sh ·
                                  patch release) · backport.sh · update-tap.sh ·
                                  package.sh (universal zip) · templates/ (casks) ·
                                  test-release.sh (sandbox tests) ·
+                                 hooks/commit-msg (opt-in, `type: summary`
+                                 subjects on main) ·
                                  generate-icons.sh/.swift (icon pipeline)
 assets/                          snappy-dynamic-s.png (icon source of truth) +
                                  generated/ (committed .icns + menu bar PNGs —

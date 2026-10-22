@@ -72,6 +72,7 @@ Tests use **Swift Testing**, not XCTest. Keep the build at 0 warnings and the su
 - **Design direction:** native Liquid Glass ("Tahoe Glass") in light and dark mode; controls ≥ 28 pt; no bezel boxes on Liquid Glass
 - **Nothing of Snappy's may reach the screen before the area-capture snapshot** — even a transparent window dismisses the open menu being captured (see `features/capture.md`)
 - **Releases only via `scripts/release.sh`** — never create or move a release tag by hand; tags are annotated, pre-releases are `vX.Y.0-beta.N`
+- **Subjects on `main` are `<type>: <user-facing summary>`** (`feat`/`fix`/`perf` shown in release notes; `docs`/`test`/`chore`/`build`/`refactor` hidden) — merge with `git merge --no-ff -m "<type>: <summary>"`, never the default message; opt-in check: `git config core.hooksPath scripts/hooks` (see `features/versioning.md`, "Release notes")
 - **`release/*` branches get no direct work** — only `git cherry-pick -x -m 1 <merge-sha>` (via `backport.sh`) of merges already on `main`
 
 ## Runtime Notes
