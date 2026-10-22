@@ -54,7 +54,7 @@ installable via the `tefa-m/snappy` Homebrew cask (build-it-yourself stays suppo
 | Build `.app`    | `./scripts/bundle.sh` (build → assemble bundle → codesign) |
 | Install/update  | `./scripts/install.sh` (shows the branch @ commit it builds and asks before installing anything but a clean `main`; replaces the installed app and relaunches it) |
 | Run             | `open dist/Snappy.app` (or `swift run` for quick iteration) |
-| Release         | `./scripts/release.sh <MAJOR.MINOR.PATCH> ["notes"]` (clean `main` + green gate → annotated tag `v<version>` + push + GitHub Release with the zip from `scripts/package.sh`; then bump the cask in `tefa-m/homebrew-snappy`; version comes from the tag — bump rules in `features/versioning.md`) |
+| Release         | `./scripts/release.sh <beta [minor\|major]\|stable\|patch\|X.Y.Z[-beta.N]> ["headline"] [--dry-run] [--yes]` / `--resume <version>` (builds + tests in a temp worktree of `origin/<branch>` → annotated tag → atomic push → GitHub Release → `snappy` / `snappy@beta` casks via `update-tap.sh`); back-ports via `./scripts/backport.sh <X.Y> <merge-sha>...` — channels, branch model and recovery in `features/versioning.md` |
 | Test            | `./scripts/test.sh` (wraps `swift test` — required with Command Line Tools only, where Testing.framework needs explicit search paths) |
 
 Tests use **Swift Testing**, not XCTest. Keep the build at 0 warnings and the suite green.
@@ -71,6 +71,8 @@ Tests use **Swift Testing**, not XCTest. Keep the build at 0 warnings and the su
 - **Shortcuts first:** every action ships with a keyboard shortcut advertised in its tooltip; Q or Esc closes any transient window. Tooltips read `<verb phrase> (KEY)`
 - **Design direction:** native Liquid Glass ("Tahoe Glass") in light and dark mode; controls ≥ 28 pt; no bezel boxes on Liquid Glass
 - **Nothing of Snappy's may reach the screen before the area-capture snapshot** — even a transparent window dismisses the open menu being captured (see `features/capture.md`)
+- **Releases only via `scripts/release.sh`** — never create or move a release tag by hand; tags are annotated, pre-releases are `vX.Y.0-beta.N`
+- **`release/*` branches get no direct work** — only `git cherry-pick -x -m 1 <merge-sha>` (via `backport.sh`) of merges already on `main`
 
 ## Runtime Notes
 
