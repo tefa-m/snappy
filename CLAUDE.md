@@ -5,8 +5,9 @@
 **Snappy** is a personal, fully offline macOS screenshot tool: screen capture,
 OCR, annotations, screenshot pinning and screen recording with live
 annotations. It is self-built so it can run on locked-down machines without any
-third-party software, and it is shared as source under the MIT license (no
-prebuilt downloads — you build it yourself).
+third-party software, and it is shared as source under the MIT license, and each
+release also ships an ad-hoc-signed universal `.app` zip on GitHub Releases,
+installable via the `tefa-m/snappy` Homebrew cask (build-it-yourself stays supported).
 
 ## Required Reading — Before Any Implementation
 
@@ -42,7 +43,7 @@ prebuilt downloads — you build it yourself).
 | Global shortcut  | Carbon `RegisterEventHotKey` |
 | Image effects    | CoreImage (blur/pixelate) |
 | Build system     | Swift Package Manager + `scripts/bundle.sh` (assembles and signs the `.app`) — **no Xcode required**, only Command Line Tools |
-| Distribution     | Built locally on the target machine, never distributed as a binary |
+| Distribution     | Source (build locally) **or** the GitHub Release zip (universal, ad-hoc signed, not notarized) via the `tefa-m/homebrew-snappy` cask |
 | Dependencies     | None (zero third-party libraries) |
 
 ## Development Workflow
@@ -53,7 +54,7 @@ prebuilt downloads — you build it yourself).
 | Build `.app`    | `./scripts/bundle.sh` (build → assemble bundle → codesign) |
 | Install/update  | `./scripts/install.sh` (shows the branch @ commit it builds and asks before installing anything but a clean `main`; replaces the installed app and relaunches it) |
 | Run             | `open dist/Snappy.app` (or `swift run` for quick iteration) |
-| Release         | `./scripts/release.sh <MAJOR.MINOR.PATCH> ["notes"]` (clean `main` + green gate → annotated tag `v<version>` + push; version comes from the tag — bump rules in `features/versioning.md`) |
+| Release         | `./scripts/release.sh <MAJOR.MINOR.PATCH> ["notes"]` (clean `main` + green gate → annotated tag `v<version>` + push + GitHub Release with the zip from `scripts/package.sh`; then bump the cask in `tefa-m/homebrew-snappy`; version comes from the tag — bump rules in `features/versioning.md`) |
 | Test            | `./scripts/test.sh` (wraps `swift test` — required with Command Line Tools only, where Testing.framework needs explicit search paths) |
 
 Tests use **Swift Testing**, not XCTest. Keep the build at 0 warnings and the suite green.

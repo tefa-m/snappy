@@ -3,16 +3,30 @@
 # Signs with the stable "Snappy Dev" identity when it exists (created once via
 # scripts/setup-signing.sh) so TCC grants survive rebuilds; falls back to
 # ad-hoc, where every rebuild invalidates the Screen Recording grant.
+# SNAPPY_SIGN_IDENTITY=- forces ad-hoc (release builds: the local identity
+# means nothing on other Macs).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP="dist/Snappy.app"
 
-swift build -c release
+if [ "${SNAPPY_UNIVERSAL:-}" = 1 ]; then
+    # Command Line Tools have no xcbuild, so `--arch a --arch b` is unavailable:
+    # build each slice on its own and merge them.
+    for arch in arm64 x86_64; do swift build -c release --arch "$arch"; done
+    mkdir -p .build/universal
+    lipo -create -output .build/universal/Snappy \
+        "$(swift build -c release --arch arm64 --show-bin-path)/Snappy" \
+        "$(swift build -c release --arch x86_64 --show-bin-path)/Snappy"
+    BIN=.build/universal/Snappy
+else
+    swift build -c release
+    BIN=.build/release/Snappy
+fi
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp .build/release/Snappy "$APP/Contents/MacOS/Snappy"
+cp "$BIN" "$APP/Contents/MacOS/Snappy"
 
 # Icon artifacts are committed; regenerate via scripts/generate-icons.sh only
 # when assets/snappy-dynamic-s.png changes.
@@ -68,7 +82,7 @@ plist_set SnappyBuildDescription "$SNAPPY_DESCRIPTION"
 echo "Version $SNAPPY_DESCRIPTION (build $SNAPPY_BUILD)"
 
 IDENTITY="${SNAPPY_SIGN_IDENTITY:-Snappy Dev}"
-if security find-identity -v -p codesigning 2>/dev/null | grep -Fq "\"$IDENTITY\""; then
+if [ "$IDENTITY" != "-" ] && security find-identity -v -p codesigning 2>/dev/null | grep -Fq "\"$IDENTITY\""; then
     codesign --force -s "$IDENTITY" "$APP"
     echo "Built $APP (signed with '$IDENTITY' — TCC grants survive rebuilds)"
 else

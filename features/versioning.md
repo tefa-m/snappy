@@ -48,8 +48,22 @@ Quit (`AppVersion`, PURE and tested). Unbundled (`swift run`) it reads
 equal to `origin/main`, the version is strictly newer than the last tag with
 commits since it, and `./scripts/test.sh` is green. Then it creates the
 annotated tag (message = release notes, default: the commit subjects since the
-last tag) and pushes `main` + the tag. **No `CHANGELOG.md`** — `git tag -n99`
+last tag) and pushes `main` + the tag. It then runs `scripts/package.sh`
+(universal arm64+x86_64 build — one `swift build` per arch, merged with `lipo`,
+because Command Line Tools have no xcbuild — ad-hoc signed, zipped with `ditto`)
+and publishes `Snappy-<version>.zip` as a GitHub Release (`gh release create`).
+The zip is built from the tagged commit, so it reports a clean `<version>`. **No `CHANGELOG.md`** — `git tag -n99`
 shows the notes; per-feature history stays in the feature docs.
+
+## Homebrew cask
+
+Binary installs go through the tap repo **`tefa-m/homebrew-snappy`**
+(`Casks/snappy.rb`: `version`, `sha256`, `url` = the release zip, `depends_on
+macos: ">= :tahoe"`, `app "Snappy.app"`, `zap` for `com.tefa.snappy`).
+`release.sh` prints the new `version`/`sha256` to paste into the cask — bumping
+the cask is a manual commit in the tap. The app is **not notarized** (ad-hoc,
+no Developer ID), so the cask's `postflight` strips `com.apple.quarantine`;
+each update has a new ad-hoc signature, so macOS re-asks for Screen Recording.
 
 ## Design decisions (grilling, 2026-10-11)
 
@@ -61,10 +75,14 @@ shows the notes; per-feature history stays in the feature docs.
 
 ## History
 
+- **2026-10-22** — Binary releases: `package.sh`, GitHub Release in `release.sh`, Homebrew cask in `tefa-m/homebrew-snappy`.
 - **2026-10-11** — Introduced: `scripts/version.sh`, `release.sh`, bundle/verify/
   install wiring, `AppVersion` + menu footer, tests. Plist was hardcoded `0.1.0`/`1` before.
 
 ## Manual checklist
+
+- [ ] `brew install --cask tefa-m/snappy/snappy` installs and launches on a clean Mac
+- [ ] `brew upgrade --cask snappy` picks up the next release
 
 - [ ] `./scripts/release.sh 1.1.0` from clean `main` creates and pushes `v1.1.0`
 - [ ] After install, the menu footer reads "Snappy 1.1.0" (exactly on the tag)
