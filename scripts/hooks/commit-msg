@@ -1,0 +1,29 @@
+#!/bin/bash
+# Opt-in commit-msg hook (features/versioning.md, "Release notes"). Enable once
+# per clone with:
+#
+#   git config core.hooksPath scripts/hooks
+#
+# Only on branch main (where the release notes come from): the subject must be
+# `<type>: <user-facing summary>`, type feat|fix|perf|docs|test|chore|build|
+# refactor. Merges into main therefore need an explicit message:
+# git merge --no-ff -m "feat: ..." <branch>. fixup!/squash!/Revert "..."
+# subjects pass. Other branches and a detached HEAD are never checked.
+set -euo pipefail
+source "$(cd "$(dirname "$0")/.." && pwd)/lib/release-lib.sh"
+
+[ "$(git symbolic-ref --short -q HEAD || true)" = main ] || exit 0
+
+# The subject: first line that is neither blank nor a comment.
+SUBJECT=$(grep -v '^#' "$1" | sed '/^[[:space:]]*$/d' | head -n 1 || true)
+case $SUBJECT in 'fixup! '* | 'squash! '* | 'Revert "'*) exit 0 ;; esac
+rl_conventional "$SUBJECT" && exit 0
+
+cat >&2 <<EOF
+commit-msg: on main the subject must be '<type>: <user-facing summary>'
+  types: feat fix perf (shown in the release notes), docs test chore build refactor (hidden)
+  got:   ${SUBJECT:-(empty)}
+  merge: git merge --no-ff -m "feat: <summary>" <branch>
+  (see features/versioning.md, "Release notes"; bypass once with --no-verify)
+EOF
+exit 1

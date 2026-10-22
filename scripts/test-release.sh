@@ -1,6 +1,6 @@
 #!/bin/bash
 # Sandbox tests for the release tooling (release.sh, backport.sh, update-tap.sh,
-# version.sh, lib/release-lib.sh). Run with macOS /bin/bash (3.2):
+# version.sh, lib/release-lib.sh, hooks/commit-msg). Run with macOS /bin/bash (3.2):
 #
 #   /bin/bash scripts/test-release.sh        (KEEP=1 keeps the sandbox dir)
 #
@@ -123,7 +123,7 @@ new_sandbox() {
     git init -q "$R"
     mkdir -p "$R/scripts"
     cp -R "$SRC/scripts/release.sh" "$SRC/scripts/backport.sh" "$SRC/scripts/update-tap.sh" \
-        "$SRC/scripts/version.sh" "$SRC/scripts/lib" "$SRC/scripts/templates" "$R/scripts/"
+        "$SRC/scripts/version.sh" "$SRC/scripts/lib" "$SRC/scripts/templates" "$SRC/scripts/hooks" "$R/scripts/"
     echo base >"$R/README"
     git -C "$R" add -A && git -C "$R" commit -q -m "Initial"
     git -C "$R" remote add origin "$O"
@@ -731,6 +731,36 @@ has "  warning printed" "WARNING: these subjects $WARN_UNCONV" "$OUT"
 has "  warning names the subject" "           Merge feat/november: november" "$OUT"
 hasnt "  warning omits conventional subjects" "           perf: mike" "$OUT"
 has "  dry run still completes" "DRY RUN complete" "$OUT"
+
+section "scripts/hooks/commit-msg: convention on main only (opt-in)"
+new_sandbox hook
+commit() { g commit -q --allow-empty "$@"; }
+succeeds "without core.hooksPath nothing is checked" commit -m "anything goes"
+g config core.hooksPath scripts/hooks
+fails "main: unconventional subject rejected" "must be '<type>: <user-facing summary>'" commit -m "Add a thing"
+has "  names the subject" "got:   Add a thing" "$OUT"
+has "  shows the merge form" 'git merge --no-ff -m "feat: <summary>"' "$OUT"
+fails "main: scope rejected" "must be" commit -m "feat(ui): x"
+fails "main: empty-summary rejected" "must be" commit -m "feat:"
+for m in "feat: a feature" "fix: a fix" "perf: faster" "docs: d" "test: t" "chore: c" "build: b" "refactor: r" \
+    "fixup! Add a thing" "squash! Add a thing" 'Revert "feat: a feature"'; do
+    succeeds "main: '$m' accepted" commit -m "$m"
+done
+printf '\n# a comment line\n\nfeat: from a file\n\nBody text that: is free.\n' >"$T/hook-msg"
+succeeds "main: subject = first non-blank, non-comment line" commit --cleanup=strip -F "$T/hook-msg"
+eq "  committed subject" "feat: from a file" "$(g log -1 --format=%s)"
+g switch -q -c feat/papa
+succeeds "feature branch: unconventional subject allowed" commit -m "WIP papa"
+g switch -q main
+fails "merge to main with the default message rejected" "Merge branch 'feat/papa'" g merge -q --no-ff --no-edit feat/papa
+g merge --abort 2>/dev/null || true
+fails "merge to main with a legacy message rejected" "must be" g merge -q --no-ff -m "Merge feat/papa: papa" feat/papa
+g merge --abort 2>/dev/null || true
+succeeds "merge to main with a conventional message accepted" g merge -q --no-ff -m "feat: papa" feat/papa
+eq "  merge commit subject" "feat: papa" "$(g log -1 --format=%s)"
+g switch -q --detach HEAD
+succeeds "detached HEAD: not checked" commit -m "detached anything"
+g switch -q main
 
 # =================================================================================
 echo
