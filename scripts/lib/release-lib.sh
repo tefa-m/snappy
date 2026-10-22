@@ -217,32 +217,95 @@ rl_shipped_picks() {
     return 0
 }
 
+# Commit subjects on main follow `<type>: <user-facing summary>` (no scope, no
+# bang). feat/fix/perf are shown in the notes, the other types are hidden; any
+# other subject (legacy "Merge feat/x: ...") is shown verbatim as "Other changes".
+RL_SUBJECT_RE='^(feat|fix|perf|docs|test|chore|build|refactor): (.+)$'
+
+# rl_conventional <subject> — true if it follows the convention.
+rl_conventional() { [[ $1 =~ $RL_SUBJECT_RE ]]; }
+
+# rl_parse_subject <subject> — PURE. Prints "<group> <text>": group feat, fix
+# or perf (text without the "type: " prefix), hidden (docs/test/chore/build/
+# refactor), or other (text = the subject verbatim).
+rl_parse_subject() {
+    if [[ $1 =~ $RL_SUBJECT_RE ]]; then
+        case ${BASH_REMATCH[1]} in
+            feat | fix | perf) printf '%s %s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" ;;
+            *) printf 'hidden %s\n' "${BASH_REMATCH[2]}" ;;
+        esac
+    else
+        printf 'other %s\n' "$1"
+    fi
+}
+
+# rl_notes_sections — subjects on stdin -> "## Features", "## Fixes",
+# "## Performance", "## Other changes" (in that order, empty ones omitted);
+# "## Changes" + "- (no user-facing changes)" if nothing is shown.
+rl_notes_sections() {
+    local s p feat="" fix="" perf="" other="" out=""
+    while IFS= read -r s; do
+        [ -n "$s" ] || continue
+        p=$(rl_parse_subject "$s")
+        case ${p%% *} in
+            feat) feat="$feat- ${p#* }"$'\n' ;;
+            fix) fix="$fix- ${p#* }"$'\n' ;;
+            perf) perf="$perf- ${p#* }"$'\n' ;;
+            other) other="$other- ${p#* }"$'\n' ;;
+        esac
+    done
+    [ -z "$feat" ] || out="$out"$'\n'"## Features"$'\n\n'"$feat"
+    [ -z "$fix" ] || out="$out"$'\n'"## Fixes"$'\n\n'"$fix"
+    [ -z "$perf" ] || out="$out"$'\n'"## Performance"$'\n\n'"$perf"
+    [ -z "$other" ] || out="$out"$'\n'"## Other changes"$'\n\n'"$other"
+    if [ -n "$out" ]; then printf '%s' "${out#$'\n'}"
+    else printf '## Changes\n\n- (no user-facing changes)\n'; fi
+}
+
+# rl_notes_log <version> <commit> <format> — git log of the commits the notes
+# cover, since rl_prev_tag: first-parent on main (one line per merge), the
+# picks (--no-merges) for a patch.
+rl_notes_log() {
+    local prev mode=--first-parent
+    prev=$(rl_prev_tag "$1" "$2")
+    [ "$(rl_channel "$1")" != patch ] || mode=--no-merges
+    git log "$mode" --format="$3" ${prev:+"$prev.."}"$2"
+}
+
+# rl_unconventional <version> <commit> — the subjects in the notes range that
+# do not follow the convention (they land under "Other changes").
+rl_unconventional() {
+    local s
+    rl_notes_log "$1" "$2" %s | while IFS= read -r s; do
+        [ -z "$s" ] || rl_conventional "$s" || printf '%s\n' "$s"
+    done
+}
+
 # rl_notes_body <version> <commit> [headline] — release notes without the
 # footer (the footer needs the zip's SHA-256). Local from git, no PR lookups.
 rl_notes_body() {
-    local v=$1 commit=$2 headline=${3:-} prev channel list shipped also="" sha subj ver t
+    local v=$1 commit=$2 headline=${3:-} prev channel list shipped also="" sha subj ver t p
     channel=$(rl_channel "$v")
     prev=$(rl_prev_tag "$v" "$commit")
     [ -z "$headline" ] || printf '%s\n\n' "$headline"
     case $channel in
-        beta)
-            list=$(git log --first-parent --format='- %s' ${prev:+"$prev.."}"$commit") ;;
-        patch)
-            list=$(git log --no-merges --format='- %s' ${prev:+"$prev.."}"$commit") ;;
+        beta | patch)
+            list=$(rl_notes_log "$v" "$commit" %s) ;;
         stable)
             shipped=$(rl_shipped_picks "$v" "$prev")
             list=""
             while read -r sha subj; do
                 [ -n "$sha" ] || continue
                 ver=$(printf '%s\n' "$shipped" | awk -v s="$sha" '$1 == s { print $2; exit }')
-                if [ -n "$ver" ]; then also="$also- $subj (also in $ver)"$'\n'
-                else list="$list- $subj"$'\n'; fi
+                if [ -z "$ver" ]; then list="$list$subj"$'\n'; continue; fi
+                p=$(rl_parse_subject "$subj")
+                [ "${p%% *}" = hidden ] || also="$also- ${p#* } (also in $ver)"$'\n'
             done <<EOF
-$(git log --first-parent --format='%H %s' ${prev:+"$prev.."}"$commit")
+$(rl_notes_log "$v" "$commit" '%H %s')
 EOF
-            list=${list%$'\n'} also=${also%$'\n'} ;;
+            also=${also%$'\n'} ;;
     esac
-    printf '## Changes\n\n%s\n' "${list:-- (no changes)}"
+    printf '%s\n' "$list" | rl_notes_sections
     if [ -n "$also" ]; then
         printf '\n## Already shipped in patch releases\n\n%s\n' "$also"
     fi
