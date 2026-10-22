@@ -54,7 +54,7 @@ installable via the `tefa-m/snappy` Homebrew cask (build-it-yourself stays suppo
 | Build `.app`    | `./scripts/bundle.sh` (build → assemble bundle → codesign) |
 | Install/update  | `./scripts/install.sh` (shows the branch @ commit it builds and asks before installing anything but a clean `main`; replaces the installed app and relaunches it) |
 | Run             | `open dist/Snappy.app` (or `swift run` for quick iteration) |
-| Release         | `./scripts/release.sh <beta [minor\|major\|patch]\|stable\|patch\|X.Y.Z[-beta.N]> ["notes"] [--dry-run] [--yes] [--resume]` (builds + tests in a temp worktree of `origin/<branch>` → annotated tag → atomic push → GitHub Release → `snappy` / `snappy@beta` casks via `update-tap.sh`); back-ports via `./scripts/backport.sh <X.Y> <merge-sha>...` — channels, branch model and recovery in `features/versioning.md` |
+| Release         | `./scripts/release.sh <beta [minor\|major]\|stable\|patch\|X.Y.Z[-beta.N]> ["headline"] [--dry-run] [--yes]` / `--resume <version>` (builds + tests in a temp worktree of `origin/<branch>` → annotated tag → atomic push → GitHub Release → `snappy` / `snappy@beta` casks via `update-tap.sh`); back-ports via `./scripts/backport.sh <X.Y> <merge-sha>...` — channels, branch model and recovery in `features/versioning.md` |
 | Test            | `./scripts/test.sh` (wraps `swift test` — required with Command Line Tools only, where Testing.framework needs explicit search paths) |
 
 Tests use **Swift Testing**, not XCTest. Keep the build at 0 warnings and the suite green.

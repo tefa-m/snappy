@@ -240,6 +240,7 @@ scripts/                         bundle.sh · install.sh · test.sh ·
                                  tag → version vars) · release.sh (beta/stable/
                                  patch release) · backport.sh · update-tap.sh ·
                                  package.sh (universal zip) · templates/ (casks) ·
+                                 test-release.sh (sandbox tests) ·
                                  generate-icons.sh/.swift (icon pipeline)
 assets/                          snappy-dynamic-s.png (icon source of truth) +
                                  generated/ (committed .icns + menu bar PNGs —
