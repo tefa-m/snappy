@@ -79,7 +79,6 @@ final class PreviewPanelController {
     private let onAction: (PreviewAction) -> Void
     private let onDismiss: () -> Void
     private var mouseMonitors: [Any] = []
-    private var keyMonitor: Any?
     private var closed = false
 
     private static let maxPreviewSize = CGSize(width: 320, height: 240)
@@ -256,14 +255,9 @@ final class PreviewPanelController {
         if let localMonitor {
             mouseMonitors.append(localMonitor)
         }
-        // Esc fallback while another of our windows is key.
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak panel] event in
-            guard event.keyCode == 53, event.window === panel else { return event }
-            MainActor.assumeIsolated {
-                self.dismiss()
-            }
-            return nil
-        }
+        // No key monitor: Esc / Q reach `PreviewPanel.keyDown` while the panel
+        // is key, and while another Snappy window (editor, pin) is key, Esc
+        // belongs to that window.
     }
 
     private func removeMonitors() {
@@ -271,10 +265,6 @@ final class PreviewPanelController {
             NSEvent.removeMonitor(monitor)
         }
         mouseMonitors = []
-        if let keyMonitor {
-            NSEvent.removeMonitor(keyMonitor)
-            self.keyMonitor = nil
-        }
     }
 }
 

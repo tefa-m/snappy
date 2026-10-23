@@ -788,7 +788,8 @@ is still a transparent `NSWindow`.
   phrase instead of the button name (`PreviewAction.toolTip(saveFolderName:)`,
   e.g. "Save PNG to Desktop (S)"). Because the panel is key, the single letters E/C/S/O/P
   trigger Edit/Copy/Save/OCR/Pin from the keyboard (handled in the panel's
-  `keyDown`, next to Esc). **Q dismisses like Esc** — panel and pin windows
+  `keyDown`, next to Esc — the panel's only key path; no key monitor, so Esc
+  in another key Snappy window is never taken by the panel). **Q dismisses like Esc** — panel and pin windows
   both (shortcuts-first rule — see the shortcuts feature doc via
   `docs/FEATURE_MAP.md`).
 - Click-away dismissal needs **two** monitors: a global mouse-down monitor
