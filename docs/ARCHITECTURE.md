@@ -278,8 +278,9 @@ Sources/Snappy/Recording/        Screen recording with live annotations
     RecordingTempStore.swift     ~/Library/Caches/com.tefa.snappy/Recordings/
                                  (prepareNewTake deletes nothing and names the
                                  take `….inprogress.mp4`; finalizeTake renames
-                                 it once written; lastTake = newest finalized;
-                                 prune/discard)
+                                 it once written (a taken name → another);
+                                 lastTake = newest finalized with a top-level
+                                 `moov` (isPlayable); prune/discard)
                                  + PURE RecordingTakeLedger (v2 take lifetime:
                                  open windows + the latest are kept) — tested
     RecordingContracts.swift     Ink vocabulary (InkTool/ColorPreset/Width/Style/
@@ -496,7 +497,8 @@ menu item → captureWindow   (unchanged: activates synchronously, then picks)
              (inside the stop's interaction) → pipeline.stop() → finished(url) → every piece closed, ⌃⌥D unregistered,
              pipeline.endTracking() → AX tree switches restored (posted to the AX executor — the main thread
              never waits for it)
-             → finalizeTake (renamed `Take-….mp4`) → ledger.finished(take) + prune (unkept takes deleted) → a new RecordingWindowController,
+             → finalizeTake (renamed `Take-….mp4`) → ledger.finished(take) + prune (unkept takes deleted) → a new RecordingWindowController
+             (rename failed → the window opens on the in-progress file, but no ledger.finished and no prune),
              shown synchronously (frontmost, focus; the take's size/duration update it later, never focus)
   WINDOW     one per take, persistent, several coexist · Retake → (closes it) beginSession(same
              target, setup-ink snapshot, ink style), then the target is looked up again (Q41: the part's
@@ -1304,7 +1306,14 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
   name and `finalizeTake` renames it after the run's `stop()` returned
   (`RecordingCoordinator.finalized`), so a file a force-quit/crash left
   mid-recording (no moov atom) is never the launch-time `latest` and is
-  deleted by the next `prune`. Save **stages
+  deleted by the next `prune`. Builds before the in-progress name wrote
+  `Take-….mp4` directly, so `lastTake` also requires a top-level `moov` box
+  (`RecordingTempStore.isPlayable`, box headers only, bounded) — a legacy
+  crash leftover is skipped too and an older playable take wins. A taken
+  finalized name is retried with another (never overwritten); if the rename
+  still fails, the take opens in its window for this run only — it never
+  becomes `latest` and nothing is pruned, so the previous latest stays
+  reopenable, and closing that window deletes it. Save **stages
   a hard link synchronously** before it yields, then copies (never moves) into
   the Save folder, so a take released meanwhile still saves; a missing take is
   refused, never fabricated. Copy pastes the saved file, else a `Recording …

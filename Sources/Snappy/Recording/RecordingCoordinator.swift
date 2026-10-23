@@ -630,12 +630,17 @@ final class RecordingCoordinator {
         switch session.phase {
         case .finished(let written):
             // The run's stop() already returned: nothing left to drain.
-            let url = finalized(written)
+            let finalizedURL = finalized(written)
             let context = RetakeContext(
-                take: url, target: session.target, userApp: userApp, setupInk: setupInk, style: style
+                take: finalizedURL ?? written, target: session.target, userApp: userApp, setupInk: setupInk,
+                style: style
             )
-            latestRetake = context
-            takeFinished(url, anchorRect: session.target.frame, retake: context)
+            if let finalizedURL {
+                latestRetake = context
+                takeFinished(finalizedURL, anchorRect: session.target.frame, retake: context)
+            } else {
+                unfinalizedTakeFinished(written, anchorRect: session.target.frame, retake: context)
+            }
         default:
             // Cancelled, or failed. With no run, nothing was ever written and
             // the previous take is untouched (Q18).
@@ -645,11 +650,10 @@ final class RecordingCoordinator {
     }
 
     /// Gives a take whose writer finished its finalized name — only those are
-    /// reopenable after a relaunch. If the rename fails the take still opens
-    /// under its in-progress name; it just isn't the last take after a
-    /// relaunch (the next `prune` deletes it then).
-    private func finalized(_ take: URL) -> URL {
-        (try? tempStore.finalizeTake(take)) ?? take
+    /// reopenable after a relaunch. Nil when the rename failed
+    /// (`unfinalizedTakeFinished`).
+    private func finalized(_ take: URL) -> URL? {
+        try? tempStore.finalizeTake(take)
     }
 
     // MARK: - Recording windows
@@ -662,6 +666,15 @@ final class RecordingCoordinator {
         _ = ledger.finished(take)
         tempStore.prune(keeping: ledger.kept)
         savedFiles.retain(only: ledger.kept)
+        presentWindow(take: take, anchorRect: anchorRect, retake: context)
+    }
+
+    /// A take that finished but couldn't be finalized: it opens in its window
+    /// for this run of the app, but it doesn't become the latest — after a
+    /// relaunch it couldn't be reopened, so the previous latest stays the one
+    /// "Reopen Last Recording" offers and nothing is pruned. Closing the
+    /// window deletes the take (the ledger doesn't keep it).
+    private func unfinalizedTakeFinished(_ take: URL, anchorRect: CGRect, retake context: RetakeContext?) {
         presentWindow(take: take, anchorRect: anchorRect, retake: context)
     }
 
@@ -703,7 +716,11 @@ final class RecordingCoordinator {
             let result = await stop.result
             guard let self else { return }
             if keepTake, case .success(let url) = result {
-                self.takeFinished(self.finalized(url), anchorRect: run.targetFrame, retake: nil)
+                if let finalizedURL = self.finalized(url) {
+                    self.takeFinished(finalizedURL, anchorRect: run.targetFrame, retake: nil)
+                } else {
+                    self.unfinalizedTakeFinished(url, anchorRect: run.targetFrame, retake: nil)
+                }
             } else {
                 self.tempStore.discard(run.url)
             }

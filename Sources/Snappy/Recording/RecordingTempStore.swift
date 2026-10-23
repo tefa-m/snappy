@@ -14,7 +14,10 @@ import Foundation
 /// `finalizeTake` once its writer finished. A file still carrying the
 /// in-progress name was never finalized — Snappy was force-quit, crashed or
 /// logged out mid-recording, and the MP4 has no moov atom — so it is never
-/// the last take, and the next `prune` deletes it.
+/// the last take, and the next `prune` deletes it. Builds before the
+/// in-progress name wrote straight to `Take-….mp4`; such a file is only the
+/// last take if its top-level boxes include a `moov` (`isPlayable`), so a
+/// crash leftover of an older build is skipped (and pruned) too.
 struct RecordingTempStore: Sendable {
     let directory: URL
 
@@ -47,14 +50,28 @@ struct RecordingTempStore: Sendable {
     }
 
     /// Renames a take whose writer finished to its finalized name and returns
-    /// it. A take that is already finalized is returned unchanged.
+    /// it. A take that is already finalized is returned unchanged. If the
+    /// finalized name is taken, another one is tried — `moveItem` never
+    /// overwrites, so the file already there (maybe the latest take) survives.
+    /// Throws when the take couldn't be renamed; it keeps its in-progress name.
     func finalizeTake(_ take: URL) throws -> URL {
         guard Self.isInProgress(take) else { return take }
         let stem = take.deletingPathExtension().deletingPathExtension().lastPathComponent
-        let finalized = take.deletingLastPathComponent().appending(path: "\(stem).\(Self.takeExtension)")
-        try FileManager.default.moveItem(at: take, to: finalized)
-        return finalized
+        var name = stem
+        for attempt in 1...Self.finalizeAttempts {
+            let finalized = take.deletingLastPathComponent().appending(path: "\(name).\(Self.takeExtension)")
+            do {
+                try FileManager.default.moveItem(at: take, to: finalized)
+                return finalized
+            } catch let error as CocoaError where error.code == .fileWriteFileExists && attempt < Self.finalizeAttempts {
+                name = "\(stem)-\(UUID().uuidString.prefix(8))"
+            }
+        }
+        preconditionFailure("the last attempt returns or throws")
     }
+
+    /// Finalized names `finalizeTake` tries before it gives up.
+    static let finalizeAttempts = 4
 
     /// True for a take that was never finalized (still being written, or left
     /// behind mid-recording by an earlier run of the app).
@@ -62,10 +79,47 @@ struct RecordingTempStore: Sendable {
         take.deletingPathExtension().pathExtension == inProgressMarker
     }
 
-    /// The most recent **finalized** take still on disk, nil if there is none.
+    /// The most recent **finalized**, playable take still on disk, nil if there
+    /// is none.
     var lastTake: URL? {
-        takes().filter { !Self.isInProgress($0) }.max { modificationDate($0) < modificationDate($1) }
+        takes()
+            .filter { !Self.isInProgress($0) }
+            .map { (take: $0, date: modificationDate($0)) }
+            .sorted { $0.date > $1.date }
+            .first { Self.isPlayable($0.take) }?
+            .take
     }
+
+    /// True when the file's top-level MP4 boxes include a `moov` — the movie
+    /// header `finishWriting` adds last, so a take cut off mid-recording has
+    /// none. Reads box headers only (at most `maxTopLevelBoxes`), never the
+    /// media; anything unreadable or malformed counts as unplayable.
+    static func isPlayable(_ take: URL) -> Bool {
+        guard let file = try? FileHandle(forReadingFrom: take) else { return false }
+        defer { try? file.close() }
+        guard let length = try? file.seekToEnd() else { return false }
+        var offset: UInt64 = 0
+        for _ in 0..<maxTopLevelBoxes {
+            guard length - offset >= 8, (try? file.seek(toOffset: offset)) != nil,
+                  let data = try? file.read(upToCount: 16), data.count >= 8 else { return false }
+            let header = [UInt8](data)
+            if header[4..<8].elementsEqual("moov".utf8) { return true }
+            var size = header.prefix(4).reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+            var headerSize: UInt64 = 8
+            if size == 1 { // 64-bit `largesize` follows the type
+                guard header.count >= 16 else { return false }
+                size = header[8..<16].reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
+                headerSize = 16
+            }
+            // 0 = the box runs to the end of the file: nothing after it.
+            guard size >= headerSize, size <= length - offset else { return false }
+            offset += size
+        }
+        return false
+    }
+
+    /// A finished take has a handful (`ftyp`, `moov`, `free`, `mdat`).
+    static let maxTopLevelBoxes = 64
 
     /// Deletes every take except `kept` — the ledger's set when a new take
     /// finished, which also clears takes left behind by an earlier run of the

@@ -72,6 +72,8 @@ struct RecordingCoordinatorTests {
         var continuation: CheckedContinuation<Void, any Error>?
         var stops = 0
         var startReturned = false
+        /// Runs once the take is written, before `stop` returns it.
+        var beforeStopReturns: (@MainActor (URL) throws -> Void)?
         /// `endTracking` calls (no AX read after them).
         var trackingEnded = 0
         init(log: Log) { self.log = log }
@@ -96,7 +98,8 @@ struct RecordingCoordinatorTests {
             stops += 1
             log("pipeline.stop")
             guard let url, startReturned else { throw Failure() }
-            try Data("mp4".utf8).write(to: url)
+            try MP4Fixture.playable.write(to: url)
+            try beforeStopReturns?(url)
             return url
         }
     }
@@ -135,6 +138,8 @@ struct RecordingCoordinatorTests {
         var chromes: [FakeChrome] = []
         var failNextStart = false
         var suspendNextStart = false
+        /// Handed to the next pipeline (`FakePipeline.beforeStopReturns`).
+        var beforeNextStopReturns: (@MainActor (URL) throws -> Void)?
         var activations = 0
         var snappyActivations = 0
         /// What the window server says about any window a Retake looks up
@@ -152,7 +157,14 @@ struct RecordingCoordinatorTests {
         /// newer than every leftover.
         private(set) var crashedTakes: [URL] = []
 
-        init(countdown: RecordingCountdown = .off, leftovers leftoverCount: Int = 0, crashedTakes crashedCount: Int = 0) {
+        /// Takes an older build (no in-progress name) left half-written under
+        /// the final name, newer than every leftover.
+        private(set) var legacyCrashedTakes: [URL] = []
+
+        init(
+            countdown: RecordingCountdown = .off, leftovers leftoverCount: Int = 0, crashedTakes crashedCount: Int = 0,
+            legacyCrashedTakes legacyCrashedCount: Int = 0
+        ) {
             defaults = UserDefaults(suiteName: suiteName)!
             let settings = SettingsStore(defaults: defaults)
             settings.recordingCountdown = countdown
@@ -160,7 +172,7 @@ struct RecordingCoordinatorTests {
                 .appending(path: "SnappyCoordinatorTests-\(UUID().uuidString)", directoryHint: .isDirectory))
             for index in 0..<leftoverCount {
                 let url = try! tempStore.prepareNewTake()
-                try! Data("leftover".utf8).write(to: url)
+                try! MP4Fixture.playable.write(to: url)
                 let finalized = try! tempStore.finalizeTake(url)
                 try! FileManager.default.setAttributes(
                     [.modificationDate: Date(timeIntervalSinceNow: Double(index - leftoverCount) * 60)],
@@ -170,8 +182,15 @@ struct RecordingCoordinatorTests {
             }
             for _ in 0..<crashedCount {
                 let url = try! tempStore.prepareNewTake()
-                try! Data("no moov atom".utf8).write(to: url)
+                try! MP4Fixture.unfinished.write(to: url)
                 crashedTakes.append(url)
+            }
+            for _ in 0..<legacyCrashedCount {
+                // Builds before the in-progress name wrote straight to the final name.
+                let url = try! tempStore.prepareNewTake().deletingPathExtension().deletingPathExtension()
+                    .appendingPathExtension(RecordingTempStore.takeExtension)
+                try! MP4Fixture.unfinished.write(to: url)
+                legacyCrashedTakes.append(url)
             }
             let box = Box()
             let components = RecordingComponents(
@@ -212,8 +231,16 @@ struct RecordingCoordinatorTests {
             let p = FakePipeline(log: log)
             p.failStart = failNextStart
             p.suspendStart = suspendNextStart
+            p.beforeStopReturns = beforeNextStopReturns
+            beforeNextStopReturns = nil
             pipelines.append(p)
             return p
+        }
+
+        /// Every take file on disk, finalized or not.
+        var takeFiles: [URL] {
+            ((try? FileManager.default.contentsOfDirectory(at: tempStore.directory, includingPropertiesForKeys: nil))
+                ?? []).filter { $0.pathExtension == RecordingTempStore.takeExtension }
         }
 
         func cleanUp() {
@@ -376,7 +403,8 @@ struct RecordingCoordinatorTests {
         h.coordinator.handle(.command(.cancel))
         #expect(!h.coordinator.isSessionActive)
         await until({ h.log.entries.contains("pipeline.stop") })
-        await until({ h.tempStore.lastTake == nil }, "partial take deleted")
+        await until({ h.takeFiles.isEmpty }, "partial take deleted")
+        #expect(h.tempStore.lastTake == nil)
         #expect(!h.isPresenting)
     }
 
@@ -487,6 +515,7 @@ struct RecordingCoordinatorTests {
         await until({ !h.coordinator.isBusy })
         #expect(h.pipelines[0].stops == 1)
         #expect(h.tempStore.lastTake == nil, "cancelled take discarded")
+        #expect(h.takeFiles.isEmpty, "no in-progress file left behind")
     }
 
     @Test func restartBeforeCleanupIsBlockedAndTheWritersFileSurvives() async throws {
@@ -525,6 +554,7 @@ struct RecordingCoordinatorTests {
         await until({ !h.coordinator.isBusy })
         #expect(h.pipelines[0].stops == 1)
         #expect(h.tempStore.lastTake == nil)
+        #expect(h.takeFiles.isEmpty, "no in-progress file left behind")
         #expect(!h.isPresenting)
     }
 
@@ -898,6 +928,90 @@ struct RecordingCoordinatorTests {
         #expect(!h.exists(crashed), "pruned with the other leftovers")
         #expect(h.exists(good), "its window is open")
         #expect(h.tempStore.lastTake?.standardizedFileURL == window.take.standardizedFileURL)
+    }
+
+    /// B1: a take an older build (no in-progress name) left half-written has
+    /// the final name but no moov atom — the older playable take still wins,
+    /// and the next finished take prunes the broken one.
+    @Test func aLegacyUnfinishedLeftoverIsNeverReopenedAndIsPruned() async throws {
+        let h = Harness(leftovers: 1, legacyCrashedTakes: 1)
+        defer { h.cleanUp() }
+        let (good, crashed) = (h.leftovers[0], h.legacyCrashedTakes[0])
+        #expect(!RecordingTempStore.isInProgress(crashed))
+
+        #expect(h.coordinator.canReopenLastRecording)
+        h.coordinator.reopenLastRecording()
+        let reopened = try #require(h.window)
+        #expect(reopened.take.standardizedFileURL == good.standardizedFileURL)
+
+        _ = try await recordTake(h)
+        #expect(!h.exists(crashed), "pruned with the other leftovers")
+        #expect(h.exists(good), "its window is open")
+    }
+
+    @Test func onlyALegacyUnfinishedLeftoverMeansNothingToReopen() {
+        let h = Harness(legacyCrashedTakes: 1)
+        defer { h.cleanUp() }
+        #expect(!h.coordinator.canReopenLastRecording)
+    }
+
+    /// B2: the finalized name is already taken — the take gets another one
+    /// instead of staying unfinalized.
+    @Test func aFinalizedNameCollisionPicksAnotherName() async throws {
+        let h = Harness()
+        defer { h.cleanUp() }
+        var squatter: URL?
+        h.beforeNextStopReturns = { url in
+            let name = url.deletingPathExtension().deletingPathExtension()
+                .appendingPathExtension(RecordingTempStore.takeExtension)
+            try Data("someone else's".utf8).write(to: name)
+            squatter = name
+        }
+        let window = try await recordTake(h)
+        let taken = try #require(squatter)
+        #expect(!RecordingTempStore.isInProgress(window.take), "finalized under another name")
+        #expect(window.take.standardizedFileURL != taken.standardizedFileURL)
+        #expect(h.exists(window.take))
+        #expect(try Data(contentsOf: window.take) == MP4Fixture.playable)
+        #expect(!h.exists(taken), "a take nobody keeps: pruned (the store tests show it isn't overwritten)")
+        #expect(h.tempStore.lastTake?.standardizedFileURL == window.take.standardizedFileURL)
+        window.close()
+        await settleClose()
+        #expect(h.exists(window.take), "the latest survives its window")
+    }
+
+    /// B2: a take that finished but couldn't be finalized opens in its window,
+    /// but the previous take stays the latest — it is neither pruned nor
+    /// displaced — and closing the window deletes the unfinalized take.
+    @Test func aFinalizeFailureKeepsThePreviousTakeTheLatest() async throws {
+        let h = Harness()
+        defer { h.cleanUp() }
+        let first = try await recordTake(h)
+        first.close()
+        await settleClose()
+        #expect(h.exists(first.take), "the latest survives its window")
+
+        let directory = h.tempStore.directory.path(percentEncoded: false)
+        // A read-only directory: the rename fails (and so would any delete).
+        h.beforeNextStopReturns = { _ in
+            try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory)
+        }
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory) }
+        let second = try await recordTake(h)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory)
+
+        #expect(RecordingTempStore.isInProgress(second.take), "opens under its in-progress name")
+        #expect(h.exists(second.take))
+        #expect(second.onRetake != nil, "Retake still works from its window")
+        #expect(h.exists(first.take), "not pruned")
+        #expect(h.tempStore.lastTake?.standardizedFileURL == first.take.standardizedFileURL)
+
+        second.close()
+        await until({ !h.exists(second.take) }, "not the latest: deleted when its window closed")
+        #expect(h.coordinator.canReopenLastRecording)
+        h.coordinator.reopenLastRecording()
+        #expect(h.window?.take.standardizedFileURL == first.take.standardizedFileURL, "the previous take reopens")
+        #expect(h.takeFiles.map(\.standardizedFileURL) == [first.take.standardizedFileURL])
     }
 
     @Test func onlyAnUnfinalizedLeftoverMeansNothingToReopen() {
