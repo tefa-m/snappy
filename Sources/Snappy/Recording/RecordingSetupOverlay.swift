@@ -123,6 +123,9 @@ final class RecordingSetupOverlay: RecordingSetupOverlaying {
             parts = WindowPartModel(tree: nil)
             sync.hovered = nil
             sync.hoveredPart = nil
+        case (true, true) where previous?.snapKind != phase.snapKind:
+            // S ↔ W while a click waits to be confirmed: that click is void.
+            parts.cancelSettling()
         default: break
         }
     }
@@ -147,12 +150,33 @@ final class RecordingSetupOverlay: RecordingSetupOverlaying {
     }
 
     /// From the mouse, the picker's load or the part tree — never inside a
-    /// broadcast, so the hovered window and part are reported at once.
+    /// broadcast, so the hovered window and part are reported at once. While
+    /// a click or Return is being confirmed the pick holds at its point: a
+    /// hand moving off the mouse mustn't drop or move the confirm.
     private func updateHover(at point: CGPoint) {
+        guard !parts.isSettling else { return }
+        pick(at: point)
+    }
+
+    private func pick(at point: CGPoint) {
         guard session?.phase.snapKind != nil, display.contains(point) else { return }
         let window = picker.window(at: point)
         parts.pointerMoved(to: point, over: window)
         showPick(window: window)
+    }
+
+    /// Confirms the pick at the click / Return point once the part tree has
+    /// answered for it (`WindowPartModel.whenSettled`) — the tree answers
+    /// later, and confirming at once would keep the part the pointer was
+    /// over before. Nothing when no window is hovered then, or when snap
+    /// mode was left or switched meanwhile.
+    private func confirmPick(at point: CGPoint, with event: RecordingEvent) {
+        guard let kind = session?.phase.snapKind else { return }
+        pick(at: point)
+        parts.whenSettled { [weak self] in
+            guard let self, session?.phase.snapKind == kind, sync.hovered != nil else { return }
+            onEvent?(event)
+        }
     }
 
     /// ↑ / ↓ or a scroll step changed the part (Q35).
@@ -227,11 +251,8 @@ final class RecordingSetupOverlay: RecordingSetupOverlaying {
 
     fileprivate func mouseUp(at point: CGPoint) {
         gesture = nil
-        if session?.phase.snapKind != nil {
-            // Make sure the target is the window clicked, then keep it.
-            updateHover(at: point)
-            if sync.hovered != nil { onEvent?(.confirmSnap) }
-        }
+        // Snapping: keep the window — or part — clicked.
+        confirmPick(at: point, with: .confirmSnap)
         updateCursor(at: point)
     }
 
@@ -310,8 +331,8 @@ final class RecordingSetupOverlay: RecordingSetupOverlaying {
         if case .snapping(let kind, _, _) = session.phase, command == .snap(kind) {
             // Return / Enter confirm like a click: the pick under the pointer,
             // and nothing when no window is hovered.
-            updateHover(at: NSEvent.mouseLocation)
-            guard sync.hovered != nil else { return true }
+            confirmPick(at: NSEvent.mouseLocation, with: .command(command))
+            return true
         }
         onEvent?(.command(command))
         return true

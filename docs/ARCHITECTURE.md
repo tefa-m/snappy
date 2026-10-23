@@ -1439,8 +1439,13 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
     (`WindowPartQueryTicket`, an atomic shared by both sides). **Latest-wins
     covers picks only**: an older answer that switched a tree on still
     schedules the post-switch recheck (the newer query reuses the empty
-    chain and can't switch again). A click or Return confirms the pick on
-    screen.
+    chain and can't switch again). **A click or Return confirms the pick
+    at its own point**, not the one on screen: `WindowPartModel.whenSettled`
+    holds the confirm until the answer for that point is applied (at once
+    with no tree / over no window / already answered); while it waits the
+    overlay ignores moves (a second click or Return supersedes, leaving or
+    switching snap mode drops it), and after `settleTimeout` (1 s) the whole
+    window at that point is confirmed.
   - **Still bounded, for the executor's throughput** (every app's queries
     share it): `WindowPartLiveAX` sets 0.25 s on each element right before
     messaging it (hit element, every parent, retained parts, a restore's
