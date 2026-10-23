@@ -95,6 +95,7 @@ struct UserFacingTextTests {
             UserFacingText.screenRecordingPermission,
             UserFacingText.annotatedImageFailed,
             UserFacingText.recordingCopyFailed(OpaqueError.boom),
+            UserFacingText.recordingClipboardFailed,
         ]
         for alert in alerts {
             #expect(alert.title.hasSuffix("."))
