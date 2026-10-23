@@ -77,7 +77,8 @@ Sources/Snappy/
     OverlayGeometry.swift          PURE overlay chrome layout: two-tone edge rects,
                                    size readout, size/title chip frames + clamp — tested
     OverlayChrome.swift            AppKit drawing of that chrome, shared by both overlays
-    OverlayKeys.swift              PURE cancel-key test (Esc or bare Q) — tested
+    OverlayKeys.swift              PURE cancel-key test (Esc or bare Q) — tested;
+                                   also the preview panel's and pins' close keys
     OverlayTracking.swift          PURE tracking-area option sets (see invariant 3) — tested
   HotKey/
     HotKeyCombo.swift            PURE combo model (keyCode + Carbon modifiers) with

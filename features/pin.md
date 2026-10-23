@@ -33,10 +33,12 @@ Part of milestone M2: pinning a capture keeps it in an always-on-top borderless 
 - **2026-10-08** — Sol reviewer round (all 4 points accepted): context menu Edit · Copy | Close (also Control-click) restores mouse access on pins too small for the bigger toolbar; a separate `.activeInActiveApp` `.cursorUpdate` tracking area re-asserts the resize pointer (`.cursorUpdate` is unsupported with `.activeAlways`); the resize-corner hit test excludes points outside the pin; the M1 citation was corrected
 - **2026-10-08** — Review pass: zoom/resize floor is fixed at creation (`min(80, initial width)`) instead of the current width, so a pin narrower than 80 pt can be zoomed back to its original size; pin Copy passes the capture scale (Retina DPI on the pasteboard image).
 - **2026-10-23** — Review fix F11: a double-click on the bottom-right resize corner closed the pin (the double-click test ran before the corner test), so a quick second grab of the corner destroyed it. The corner now wins (`PinGeometry.mouseDownAction`, tested); a double-click anywhere else still closes.
+- **2026-10-23** — Review fix F8: Q closed a pin with any modifiers held (⌘Q / ⌥Q / ⌃Q too). The pin's `keyDown` now uses `OverlayKeys.isCancel` like the overlays: Esc, or a **bare** Q (Shift / Caps Lock tolerated).
 
 ## Manual checklist — review fixes (2026-10-23, pending)
 
 - [ ] Double-click the bottom-right resize corner of a pin → the pin stays open (the second press starts a resize); double-click anywhere else → the pin closes
+- [ ] Click a pin, press ⌘Q / ⌥Q / ⌃Q → the pin stays open; Q, ⇧Q (and Q with Caps Lock) and Esc close it
 
 ## Manual checklist — HIG design pass (2026-10-08, unverified)
 

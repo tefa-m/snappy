@@ -306,7 +306,9 @@ private final class PreviewPanel: NSPanel {
 
     override func keyDown(with event: NSEvent) {
         let key = event.charactersIgnoringModifiers?.lowercased()
-        if event.keyCode == 53 || key == "q" { // Esc / Q dismiss
+        if OverlayKeys.isCancel( // Esc / bare Q dismiss — not ⌘Q / ⌥Q / ⌃Q
+            keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, flags: event.modifierFlags
+        ) {
             onEsc?()
             return
         }

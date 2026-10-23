@@ -27,6 +27,11 @@ See `docs/ARCHITECTURE.md` for the panel invariants (dual click-away monitors, n
 - **2026-10-09** — Recording T0: a sixth action **Record** (`record.circle`, "Record this area (R)", key **R**) after Pin, handing the captured area to recording Setup ([recording.md](recording.md)); the five screenshot actions are unchanged. ⇧⌘4 is now context-sensitive (`CaptureHotKeyRoute`): it stops a recording and is ignored during the rest of a recording session
 
 - **2026-10-09** — Fix: the 10 pt horizontal inset was missing (a vertical `NSStackView` with `.centerX` alignment drops its left/right `edgeInsets`), so the preview touched the glass's left and right edges and the concentric corners didn't hold there. The inset now comes from a container around the stack, like the recording preview panel. Measured headlessly: panel 320 → 340 pt wide for a 320 pt preview, image at x = 10 (was 0)
+- **2026-10-23** — Review fix F8: Q dismissed the panel with any modifiers held (⌘Q / ⌥Q / ⌃Q too). The panel's `keyDown` now uses `OverlayKeys.isCancel` like the overlays: Esc, or a **bare** Q (Shift / Caps Lock tolerated).
+
+## Manual checklist — review fixes (2026-10-23, pending)
+
+- [ ] With the preview panel showing, ⌥Q / ⌃Q leave it open; Q, ⇧Q (and Q with Caps Lock) and Esc dismiss it
 
 ## Manual checklist — Tahoe Glass (2026-10-08, unverified)
 

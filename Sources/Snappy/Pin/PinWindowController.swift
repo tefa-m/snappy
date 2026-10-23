@@ -96,7 +96,9 @@ private final class PinWindow: NSWindow {
 
     override func keyDown(with event: NSEvent) {
         let key = event.charactersIgnoringModifiers?.lowercased()
-        if event.keyCode == 53 || key == PinAction.close.shortcutKey { // Esc / Q
+        if OverlayKeys.isCancel( // Esc / bare Q — ⌘Q / ⌥Q / ⌃Q are not a close
+            keyCode: event.keyCode, characters: event.charactersIgnoringModifiers, flags: event.modifierFlags
+        ) {
             onCloseRequested?()
         } else if key == PinAction.edit.shortcutKey, ShortcutKeys.isBareKey(event.modifierFlags) {
             onEditRequested?()
