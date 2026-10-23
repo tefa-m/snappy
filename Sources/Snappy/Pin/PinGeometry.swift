@@ -55,6 +55,18 @@ enum PinGeometry {
             && point.y >= bounds.minY && point.y <= bounds.minY + cornerSize
     }
 
+    /// What a left mouse-down on the pin does. The resize corner wins over
+    /// the double-click close, so a quick second grab of the corner (a
+    /// double-click there) resizes instead of destroying the pin.
+    enum MouseDownAction: Equatable {
+        case resize, close, drag
+    }
+
+    static func mouseDownAction(clickCount: Int, inResizeCorner: Bool) -> MouseDownAction {
+        if inResizeCorner { return .resize }
+        return clickCount == 2 ? .close : .drag
+    }
+
     /// Whether the hover toolbar fits inside a pin of `pinSize` with `inset`
     /// on every side — in both dimensions, so a short pin hides it rather than
     /// clipping it at the bottom edge.

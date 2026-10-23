@@ -213,7 +213,14 @@ final class SettingsWindowController: NSObject {
     /// reopen after a Dock/resolution change lands inside it (`show()` refits
     /// before ordering front).
     private func fitToScreen() {
-        guard let screen = window.screen ?? NSScreen.main else { return }
+        guard let main = NSScreen.main ?? NSScreen.screens.first else { return }
+        // The screen the window mostly overlaps (also while it's closed),
+        // else the main one.
+        let visible = SettingsPaneFit.visibleFrame(
+            for: window.frame,
+            screens: NSScreen.screens.map { (frame: $0.frame, visible: $0.visibleFrame) },
+            fallback: main.visibleFrame
+        )
         let natural = grid.fittingSize
         let content = CGSize(
             width: ceil(natural.width) + 2 * Self.paneInset,
@@ -224,7 +231,7 @@ final class SettingsWindowController: NSObject {
             : 0
         let fit = SettingsPaneFit.fit(
             content: content,
-            visibleHeight: screen.visibleFrame.height,
+            visibleHeight: visible.height,
             chromeHeight: window.frameRect(forContentRect: .zero).height,
             scrollerWidth: scrollerWidth
         )
@@ -232,7 +239,7 @@ final class SettingsWindowController: NSObject {
         let frame = SettingsPaneFit.windowFrame(
             size: window.frameRect(forContentRect: NSRect(origin: .zero, size: fit.contentSize)).size,
             keepingTopOf: window.frame,
-            in: screen.visibleFrame
+            in: visible
         )
         window.setFrame(frame, display: window.isVisible)
     }

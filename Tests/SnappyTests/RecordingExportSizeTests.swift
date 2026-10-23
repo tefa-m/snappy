@@ -102,6 +102,24 @@ import Testing
         #expect(ExportSizeText.bytes(2_500_000_000) == "2.5 GB")
     }
 
+    @Test func boundariesPromoteOnTheRoundedValue() {
+        #expect(ExportSizeText.bytes(999_499) == "1.0 MB")
+        #expect(ExportSizeText.bytes(999_999) == "1.0 MB")
+        #expect(ExportSizeText.bytes(998_999) == "999 KB")
+        #expect(ExportSizeText.bytes(99_949_999) == "99.9 MB")
+        #expect(ExportSizeText.bytes(99_950_000) == "100 MB")
+        #expect(ExportSizeText.bytes(99_999_999) == "100 MB")
+        #expect(ExportSizeText.bytes(999_499_999) == "999 MB")
+        #expect(ExportSizeText.bytes(999_500_000) == "1.0 GB")
+        #expect(ExportSizeText.bytes(999_999_999) == "1.0 GB")
+        #expect(ExportSizeText.bytes(99_999_999_999) == "100 GB")
+        #expect(ExportSizeText.bytes(5_000_000_000_000) == "5000 GB")
+        // Bounds promote too, and never read below the bytes.
+        #expect(ExportSizeText.bytes(99_900_001, roundingUp: true) == "100 MB")
+        #expect(ExportSizeText.bytes(999_000_001, roundingUp: true) == "1.0 GB")
+        #expect(ExportSizeText.bytes(999_001, roundingUp: true) == "1.0 MB")
+    }
+
     @Test func aBoundNeverReadsBelowItsBytes() {
         #expect(ExportSizeText.bytes(18_400_000, roundingUp: true) == "18.4 MB")
         #expect(ExportSizeText.bytes(18_400_001, roundingUp: true) == "18.5 MB")

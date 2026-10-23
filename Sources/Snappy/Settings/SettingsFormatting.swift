@@ -357,13 +357,33 @@ enum SettingsPaneFit {
         return placed(resized, in: visible)
     }
 
-    /// `frame` moved (never resized) so it lies inside `visible` vertically:
-    /// keeps its top edge if it can, else slides up from the Dock, and the top
-    /// wins when it's taller than `visible`. Horizontal position is left alone.
+    /// `frame` moved (never resized) so it lies inside `visible`: vertically
+    /// it keeps its top edge if it can, else slides up from the Dock, and the
+    /// top wins when it's taller than `visible`; horizontally it keeps its
+    /// left edge if it can, else slides back in, and the left edge wins when
+    /// it's wider (review finding F10: a window left half off a display —
+    /// e.g. after a resolution change — was only clamped vertically).
     static func placed(_ frame: CGRect, in visible: CGRect) -> CGRect {
         var placed = frame
         if placed.minY < visible.minY { placed.origin.y = visible.minY }
         if placed.maxY > visible.maxY { placed.origin.y = visible.maxY - placed.height }
+        if placed.maxX > visible.maxX { placed.origin.x = visible.maxX - placed.width }
+        if placed.minX < visible.minX { placed.origin.x = visible.minX }
         return placed
+    }
+
+    /// The visible frame of the screen `frame` overlaps most (`screens` are
+    /// (frame, visibleFrame) pairs); `fallback` — the main screen's — when it
+    /// overlaps none, e.g. after its display was disconnected.
+    static func visibleFrame(
+        for frame: CGRect, screens: [(frame: CGRect, visible: CGRect)], fallback: CGRect
+    ) -> CGRect {
+        func overlap(_ screen: CGRect) -> CGFloat {
+            let shared = screen.intersection(frame)
+            return shared.isNull ? 0 : shared.width * shared.height
+        }
+        let best = screens.max { overlap($0.frame) < overlap($1.frame) }
+        guard let best, overlap(best.frame) > 0 else { return fallback }
+        return best.visible
     }
 }

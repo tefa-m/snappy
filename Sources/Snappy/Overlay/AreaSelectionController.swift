@@ -112,6 +112,9 @@ final class AreaSelectionController {
         }
         overlays = []
         snapshots = []
+        // The crosshair set on begin outlives the overlays; restore the arrow
+        // on completion and cancel alike (the pin does the same on mouse-up).
+        NSCursor.arrow.set()
         completion(result)
     }
 }

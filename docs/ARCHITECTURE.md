@@ -77,7 +77,8 @@ Sources/Snappy/
     OverlayGeometry.swift          PURE overlay chrome layout: two-tone edge rects,
                                    size readout, size/title chip frames + clamp — tested
     OverlayChrome.swift            AppKit drawing of that chrome, shared by both overlays
-    OverlayKeys.swift              PURE cancel-key test (Esc or bare Q) — tested
+    OverlayKeys.swift              PURE cancel-key test (Esc or bare Q) — tested;
+                                   also the preview panel's and pins' close keys
     OverlayTracking.swift          PURE tracking-area option sets (see invariant 3) — tested
   HotKey/
     HotKeyCombo.swift            PURE combo model (keyCode + Carbon modifiers) with
@@ -126,7 +127,8 @@ Sources/Snappy/
                                  Record — R hands the area to recording Setup)
   Pin/
     PinGeometry.swift            PURE zoom/corner-resize math, resize-corner
-                                 hit test, toolbar fit — unit-tested
+                                 hit test, mouse-down action (corner beats
+                                 double-click close), toolbar fit — unit-tested
     PinAction.swift              PURE toolbar actions (title/symbol/key/tooltip)
                                  + hover alpha (Reduce Transparency) — tested
     PinWindowController.swift    Always-on-top pinned screenshot windows +
@@ -213,7 +215,10 @@ Sources/Snappy/
                                  HotKeyBindings (all four combos; conflict,
                                  resetRejection), menuKeyEquivalent,
                                  SettingsPaneFit (clamp + scroll
-                                 when the pane is taller than the screen)
+                                 when the pane is taller than the screen;
+                                 placement clamps both axes into the
+                                 visible frame of the screen the window
+                                 overlaps most, else the main one)
     SettingsWindowController.swift  Single-pane "Snappy Settings": pop-up path
                                  control, Capture area / Capture screen
                                  shortcut fields + Open Keyboard Settings,
@@ -794,7 +799,8 @@ is still a transparent `NSWindow`.
   phrase instead of the button name (`PreviewAction.toolTip(saveFolderName:)`,
   e.g. "Save PNG to Desktop (S)"). Because the panel is key, the single letters E/C/S/O/P
   trigger Edit/Copy/Save/OCR/Pin from the keyboard (handled in the panel's
-  `keyDown`, next to Esc). **Q dismisses like Esc** — panel and pin windows
+  `keyDown`, next to Esc — the panel's only key path; no key monitor, so Esc
+  in another key Snappy window is never taken by the panel). **Q dismisses like Esc** — panel and pin windows
   both (shortcuts-first rule — see the shortcuts feature doc via
   `docs/FEATURE_MAP.md`).
 - Click-away dismissal needs **two** monitors: a global mouse-down monitor
