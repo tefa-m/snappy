@@ -342,15 +342,54 @@ struct RecordingTempStoreTests {
         #expect(url.deletingLastPathComponent().standardizedFileURL == store.directory.standardizedFileURL)
         #expect(FileManager.default.fileExists(atPath: store.directory.path(percentEncoded: false)))
         #expect(!FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
+        #expect(RecordingTempStore.isInProgress(url))
         #expect(store.lastTake == nil) // nothing written yet
     }
 
-    @Test func writtenTakeIsTheLastTake() throws {
+    @Test func finalizedTakeIsTheLastTake() throws {
         let store = try makeStore()
         defer { cleanUp(store) }
         let url = try store.prepareNewTake()
         try Data("video".utf8).write(to: url)
-        #expect(store.lastTake?.standardizedFileURL == url.standardizedFileURL)
+        let take = try store.finalizeTake(url)
+        #expect(take.pathExtension == "mp4")
+        #expect(!RecordingTempStore.isInProgress(take))
+        #expect(!FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
+        #expect(store.lastTake?.standardizedFileURL == take.standardizedFileURL)
+        #expect(try store.finalizeTake(take) == take) // already finalized: unchanged
+    }
+
+    /// F2: a take left behind mid-recording (force-quit, crash, logout) has no
+    /// moov atom — it never becomes the last take, even when it is the newest.
+    @Test func anUnfinalizedTakeIsNeverTheLastTake() throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        let good = try store.finalizeTake(writtenTake(store, "good", minutesAgo: 5))
+        let crashed = try writtenTake(store, "half-written", minutesAgo: 0)
+        #expect(store.lastTake?.standardizedFileURL == good.standardizedFileURL)
+        store.discard(good)
+        #expect(store.lastTake == nil, "only the unfinalized one is left")
+        #expect(FileManager.default.fileExists(atPath: crashed.path(percentEncoded: false)))
+    }
+
+    @Test func pruneDeletesUnfinalizedLeftovers() throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        let good = try store.finalizeTake(writtenTake(store, "good", minutesAgo: 5))
+        let crashed = try writtenTake(store, "half-written", minutesAgo: 0)
+        store.prune(keeping: [good])
+        #expect(!FileManager.default.fileExists(atPath: crashed.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: good.path(percentEncoded: false)))
+    }
+
+    /// A take written but not finalized, its modification date `minutesAgo`.
+    private func writtenTake(_ store: RecordingTempStore, _ contents: String, minutesAgo: Double) throws -> URL {
+        let url = try store.prepareNewTake()
+        try Data(contents.utf8).write(to: url)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -minutesAgo * 60)], ofItemAtPath: url.path(percentEncoded: false)
+        )
+        return url
     }
 
     /// v2 (Q30): open windows and the latest take keep theirs through the
@@ -358,8 +397,7 @@ struct RecordingTempStoreTests {
     @Test func preparingANewTakeDeletesNothing() throws {
         let store = try makeStore()
         defer { cleanUp(store) }
-        let first = try store.prepareNewTake()
-        try Data("one".utf8).write(to: first)
+        let first = try store.finalizeTake(writtenTake(store, "one", minutesAgo: 0))
         let second = try store.prepareNewTake()
         #expect(second != first)
         #expect(FileManager.default.fileExists(atPath: first.path(percentEncoded: false)))

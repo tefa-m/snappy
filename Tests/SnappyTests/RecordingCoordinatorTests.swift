@@ -148,7 +148,11 @@ struct RecordingCoordinatorTests {
         /// Takes an earlier run of the app left in Caches, oldest first.
         private(set) var leftovers: [URL] = []
 
-        init(countdown: RecordingCountdown = .off, leftovers leftoverCount: Int = 0) {
+        /// Takes an earlier run left half-written (force-quit mid-recording),
+        /// newer than every leftover.
+        private(set) var crashedTakes: [URL] = []
+
+        init(countdown: RecordingCountdown = .off, leftovers leftoverCount: Int = 0, crashedTakes crashedCount: Int = 0) {
             defaults = UserDefaults(suiteName: suiteName)!
             let settings = SettingsStore(defaults: defaults)
             settings.recordingCountdown = countdown
@@ -157,11 +161,17 @@ struct RecordingCoordinatorTests {
             for index in 0..<leftoverCount {
                 let url = try! tempStore.prepareNewTake()
                 try! Data("leftover".utf8).write(to: url)
+                let finalized = try! tempStore.finalizeTake(url)
                 try! FileManager.default.setAttributes(
                     [.modificationDate: Date(timeIntervalSinceNow: Double(index - leftoverCount) * 60)],
-                    ofItemAtPath: url.path(percentEncoded: false)
+                    ofItemAtPath: finalized.path(percentEncoded: false)
                 )
-                leftovers.append(url)
+                leftovers.append(finalized)
+            }
+            for _ in 0..<crashedCount {
+                let url = try! tempStore.prepareNewTake()
+                try! Data("no moov atom".utf8).write(to: url)
+                crashedTakes.append(url)
             }
             let box = Box()
             let components = RecordingComponents(
@@ -243,7 +253,12 @@ struct RecordingCoordinatorTests {
         h.coordinator.stop()
         await until({ h.isPresenting }, "recording window presented")
         #expect(!h.coordinator.isSessionActive)
-        #expect(h.window?.take == h.pipelines[0].url)
+        let written = try #require(h.pipelines[0].url)
+        #expect(RecordingTempStore.isInProgress(written), "written under the in-progress name")
+        #expect(h.window?.take.lastPathComponent
+            == written.lastPathComponent.replacingOccurrences(of: ".inprogress", with: ""),
+            "presented under the finalized name")
+        #expect(h.exists(h.window?.take) && !h.exists(written))
         #expect(h.window?.onRetake != nil)
         #expect(h.log.entries.contains("overlay.close") && h.log.entries.contains("ink.close")
             && h.log.entries.contains("chrome.close"))
@@ -864,6 +879,31 @@ struct RecordingCoordinatorTests {
         reopened.close()
         await until({ !h.exists(newest) })
         #expect(h.exists(window.take))
+    }
+
+    /// F2: a take a crash left unfinalized never displaces the good one as
+    /// "Reopen Last Recording", and the next finished take prunes it.
+    @Test func anUnfinalizedLeftoverIsNeverReopenedAndIsPruned() async throws {
+        let h = Harness(leftovers: 1, crashedTakes: 1)
+        defer { h.cleanUp() }
+        let (good, crashed) = (h.leftovers[0], h.crashedTakes[0])
+
+        h.coordinator.reopenLastRecording()
+        let reopened = try #require(h.window)
+        #expect(reopened.take.standardizedFileURL == good.standardizedFileURL)
+
+        let window = try await recordTake(h)
+        #expect(!RecordingTempStore.isInProgress(window.take), "a finished take is finalized")
+        #expect(h.exists(window.take))
+        #expect(!h.exists(crashed), "pruned with the other leftovers")
+        #expect(h.exists(good), "its window is open")
+        #expect(h.tempStore.lastTake?.standardizedFileURL == window.take.standardizedFileURL)
+    }
+
+    @Test func onlyAnUnfinalizedLeftoverMeansNothingToReopen() {
+        let h = Harness(crashedTakes: 1)
+        defer { h.cleanUp() }
+        #expect(!h.coordinator.canReopenLastRecording)
     }
 
     // MARK: - Fix round 1: focus and saved files

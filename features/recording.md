@@ -188,7 +188,10 @@ Control, as with the editor.
 **Take lifetime (Q30):** each window **owns its take**. A new recording no longer deletes a
 take whose window is still open, so **several recording windows can coexist** (like editors).
 Closing a window deletes its take, **except the latest take**, which stays in Caches for
-"Reopen Last Recording" until a newer take exists *and* its own window is closed.
+"Reopen Last Recording" until a newer take exists *and* its own window is closed. Only a
+**finalized** take counts: a take is written as `Take-….inprogress.mp4` and renamed `Take-….mp4`
+once its writer finished, so a take a force-quit, crash or logout left half-written is never the
+one reopened, and the next finished take prunes it.
 **Reopen Last Recording** brings that take's window to the front if it's open, and never opens a
 second copy (Q43).
 
@@ -538,6 +541,7 @@ same change as the code.
   capsule labels unclipped at 440 pt and narrower.
 - **2026-10-20** — **Export size** (`feature/export-size`, decisions agreed with Tefa): the recording window's status capsule gets a 4-stop slider (100/75/50/25 %, `[` / `]`) and a size readout (real size, or "≤" estimate at a smaller stop). Save and Copy export at the stop; 100 % is unchanged, smaller stops re-encode into a temp file first (`RecordingTranscoder`, AVAssetReader → AVAssetWriter, writer-side scaling) with a progress ring on the pressed button, Esc/Q/⌘W cancelling only the re-encode, inline "Export failed" and never a full-size fallback. `RecordingSavedFiles` is keyed per stop; PURE `ExportScale` / `ExportSizing` / `ExportSizeText` / `RecordingExportSource`; Settings → Recording › Default export size. Tests: pure math + a real re-encode of a synthetic take (half size, no audio, take bit-identical, cancel removes the partial file) + window flows (Save at 50 %, Copy reuse rule, Esc cancel, failure).
 - **2026-10-20** — **Area / Window toolbar buttons** (`feat/toolbar-snap-buttons`): a new `[Area · Window]` group right after Record · timer (`rectangle.dashed` / `macwindow`, the same borderless on/off buttons as the tool picker). A click sends S / W's `.snap`; the active snap mode shows its on state, and a click on it steps back (`.stepBack` = Esc / Q / the same key again — "returns to where you were": restores the previous rect and the Setup mode or tool snapping started from, Pen after Pen, Pointer after Pointer; not always Pointer); the other one switches. Enabled in Setup and snap mode only — dimmed, never hidden, during the countdown and recording, so the capsule never changes width; Cancel stays enabled while snapping as before. Tooltips "Snap to a window's area (S)" / "Snap to a window (W)" (in snap mode the active one reads "Stop snapping and go back to the previous target"), the key shown only in Setup and snap mode. Tested against `RecordingSession` (enabled ⇔ the session acts) and with the real coordinator + chrome (`RecordingIntegrationTests.snapButtons`).
+- **2026-10-23** — **Review finding F2** (`fix/capture-take-integrity`): a take left behind by a force-quit/crash/logout mid-recording (no moov atom, unplayable) was the newest `.mp4` in Caches, so after a relaunch it became "Reopen Last Recording" and displaced the good take. Takes are now written under an in-progress name (`Take-….inprogress.mp4`, `RecordingTempStore.prepareNewTake`) and renamed by `finalizeTake` once the pipeline's `stop()` returned; `lastTake` (the ledger's seed at launch) only considers finalized takes, and `prune` deletes in-progress leftovers with the other leftovers. A failed rename still opens the take under its in-progress name — it just isn't reopenable after a relaunch. Tests: temp-store (unfinalized never last, pruned, finalize idempotent) + coordinator (a crashed leftover is never reopened and is pruned by the next take; only a crashed leftover → nothing to reopen).
 
 ## Manual checklist
 

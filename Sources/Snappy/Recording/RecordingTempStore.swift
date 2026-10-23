@@ -9,10 +9,18 @@ import Foundation
 /// Stateless on purpose: `lastTake` is read from the directory, so there is no
 /// bookkeeping to go stale. Which takes to keep is the ledger's decision; the
 /// store only lists, names and deletes files.
+///
+/// A take is written under an **in-progress name** and renamed by
+/// `finalizeTake` once its writer finished. A file still carrying the
+/// in-progress name was never finalized — Snappy was force-quit, crashed or
+/// logged out mid-recording, and the MP4 has no moov atom — so it is never
+/// the last take, and the next `prune` deletes it.
 struct RecordingTempStore: Sendable {
     let directory: URL
 
     static let takeExtension = "mp4"
+    /// `Take-….inprogress.mp4` until `finalizeTake` renames it `Take-….mp4`.
+    static let inProgressMarker = "inprogress"
 
     /// `~/Library/Caches/com.tefa.snappy/Recordings/`. The bundle id is spelled
     /// out because an unbundled `swift run` has none.
@@ -26,24 +34,42 @@ struct RecordingTempStore: Sendable {
         self.directory = directory
     }
 
-    /// Creates the directory and returns the URL the new take is written to
-    /// (not created — the pipeline writes it). Deletes nothing (v2, Q30): a
-    /// take whose window is open must survive the next recording, and the
-    /// latest take survives a recording that is cancelled or fails.
+    /// Creates the directory and returns the in-progress URL the new take is
+    /// written to (not created — the pipeline writes it). Deletes nothing (v2,
+    /// Q30): a take whose window is open must survive the next recording, and
+    /// the latest take survives a recording that is cancelled or fails.
     func prepareNewTake(date: Date = .now) throws -> URL {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let stamp = Int(date.timeIntervalSince1970 * 1000)
-        return directory.appending(path: "Take-\(stamp)-\(UUID().uuidString.prefix(8)).\(Self.takeExtension)")
+        return directory.appending(
+            path: "Take-\(stamp)-\(UUID().uuidString.prefix(8)).\(Self.inProgressMarker).\(Self.takeExtension)"
+        )
     }
 
-    /// The most recent take still on disk, nil if there is none.
+    /// Renames a take whose writer finished to its finalized name and returns
+    /// it. A take that is already finalized is returned unchanged.
+    func finalizeTake(_ take: URL) throws -> URL {
+        guard Self.isInProgress(take) else { return take }
+        let stem = take.deletingPathExtension().deletingPathExtension().lastPathComponent
+        let finalized = take.deletingLastPathComponent().appending(path: "\(stem).\(Self.takeExtension)")
+        try FileManager.default.moveItem(at: take, to: finalized)
+        return finalized
+    }
+
+    /// True for a take that was never finalized (still being written, or left
+    /// behind mid-recording by an earlier run of the app).
+    static func isInProgress(_ take: URL) -> Bool {
+        take.deletingPathExtension().pathExtension == inProgressMarker
+    }
+
+    /// The most recent **finalized** take still on disk, nil if there is none.
     var lastTake: URL? {
-        takes().max { modificationDate($0) < modificationDate($1) }
+        takes().filter { !Self.isInProgress($0) }.max { modificationDate($0) < modificationDate($1) }
     }
 
     /// Deletes every take except `kept` — the ledger's set when a new take
     /// finished, which also clears takes left behind by an earlier run of the
-    /// app. Never call while a capture may be writing a take that isn't in
+    /// app, finalized or not. Never call while a capture may be writing a take that isn't in
     /// `kept` (the coordinator calls it only when no run is active).
     func prune(keeping kept: Set<URL>) {
         let keep = Set(kept.map(\.standardizedFileURL))

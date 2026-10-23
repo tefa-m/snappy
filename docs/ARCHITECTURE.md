@@ -276,7 +276,10 @@ Sources/Snappy/Recording/        Screen recording with live annotations
     RecordingSettings.swift      Every Settings → Recording option + defaults
                                  (SettingsStore keys/accessors) — tested
     RecordingTempStore.swift     ~/Library/Caches/com.tefa.snappy/Recordings/
-                                 (prepareNewTake deletes nothing; prune/discard)
+                                 (prepareNewTake deletes nothing and names the
+                                 take `….inprogress.mp4`; finalizeTake renames
+                                 it once written; lastTake = newest finalized;
+                                 prune/discard)
                                  + PURE RecordingTakeLedger (v2 take lifetime:
                                  open windows + the latest are kept) — tested
     RecordingContracts.swift     Ink vocabulary (InkTool/ColorPreset/Width/Style/
@@ -480,7 +483,7 @@ menu item → captureWindow   (unchanged: activates synchronously, then picks)
              under the pointer; same key / the lit button back, other switches, click / Return confirms;
              first entry without Accessibility → the one-time prompt) · R → countdown (1 s ticks)
              · Esc / Cancel → cancelled
-  RECORDING  RecordingTempStore.prepareNewTake (a new URL; deletes nothing)
+  RECORDING  RecordingTempStore.prepareNewTake (a new `….inprogress.mp4` URL; deletes nothing)
              → pipeline.start(target, settings, ink.frameDecorator, url)
              overlay ordered out → activateUserApp (yield + activate): keys belong to the user's app
              ⌃⌥D / toolbar ↔ draw mode (ink panel key, Snappy NOT activated)
@@ -493,7 +496,7 @@ menu item → captureWindow   (unchanged: activates synchronously, then picks)
              (inside the stop's interaction) → pipeline.stop() → finished(url) → every piece closed, ⌃⌥D unregistered,
              pipeline.endTracking() → AX tree switches restored (posted to the AX executor — the main thread
              never waits for it)
-             → ledger.finished(url) + prune (unkept takes deleted) → a new RecordingWindowController,
+             → finalizeTake (renamed `Take-….mp4`) → ledger.finished(take) + prune (unkept takes deleted) → a new RecordingWindowController,
              shown synchronously (frontmost, focus; the take's size/duration update it later, never focus)
   WINDOW     one per take, persistent, several coexist · Retake → (closes it) beginSession(same
              target, setup-ink snapshot, ink style), then the target is looked up again (Q41: the part's
@@ -1290,7 +1293,12 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
   *counted* per take, because a window still closing (its `onClose` lands a
   turn later) and a reopened one can overlap. The ledger's `latest` is seeded
   from the newest take on disk at launch. The take being written is never in
-  the ledger, so a window closing mid-recording can't touch it. Save **stages
+  the ledger, so a window closing mid-recording can't touch it. **Only
+  finalized takes are reopenable:** a take is written under an in-progress
+  name and `finalizeTake` renames it after the run's `stop()` returned
+  (`RecordingCoordinator.finalized`), so a file a force-quit/crash left
+  mid-recording (no moov atom) is never the launch-time `latest` and is
+  deleted by the next `prune`. Save **stages
   a hard link synchronously** before it yields, then copies (never moves) into
   the Save folder, so a take released meanwhile still saves; a missing take is
   refused, never fabricated. Copy pastes the saved file, else a `Recording …

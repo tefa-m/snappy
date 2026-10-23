@@ -168,7 +168,8 @@ final class RecordingCoordinator {
         self.components = components
         self.settings = settings
         self.tempStore = tempStore
-        // After a relaunch, the newest take on disk is the one to reopen.
+        // After a relaunch, the newest finalized take on disk is the one to
+        // reopen — never one a crash left half-written.
         ledger = RecordingTakeLedger(latest: tempStore.lastTake)
     }
 
@@ -627,8 +628,9 @@ final class RecordingCoordinator {
         onPhaseChange?(nil)
 
         switch session.phase {
-        case .finished(let url):
+        case .finished(let written):
             // The run's stop() already returned: nothing left to drain.
+            let url = finalized(written)
             let context = RetakeContext(
                 take: url, target: session.target, userApp: userApp, setupInk: setupInk, style: style
             )
@@ -640,6 +642,14 @@ final class RecordingCoordinator {
             guard let run else { return }
             drain(run, keepTake: failed && Self.failedTakeHandling == .salvage)
         }
+    }
+
+    /// Gives a take whose writer finished its finalized name — only those are
+    /// reopenable after a relaunch. If the rename fails the take still opens
+    /// under its in-progress name; it just isn't the last take after a
+    /// relaunch (the next `prune` deletes it then).
+    private func finalized(_ take: URL) -> URL {
+        (try? tempStore.finalizeTake(take)) ?? take
     }
 
     // MARK: - Recording windows
@@ -693,7 +703,7 @@ final class RecordingCoordinator {
             let result = await stop.result
             guard let self else { return }
             if keepTake, case .success(let url) = result {
-                self.takeFinished(url, anchorRect: run.targetFrame, retake: nil)
+                self.takeFinished(self.finalized(url), anchorRect: run.targetFrame, retake: nil)
             } else {
                 self.tempStore.discard(run.url)
             }
