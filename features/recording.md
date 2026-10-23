@@ -541,6 +541,12 @@ same change as the code.
 - **2026-10-23** — Review fix F7: the export-size readout (`ExportSizeText.bytes`) chooses KB / MB / GB and the one-decimal form on the **rounded** value, so 999 999 bytes read "1.0 MB" (was "1000 KB"), 99 999 999 "100 MB" (was "100.0 MB") and 999 999 999 "1.0 GB" (was "1000 MB"); the "≤" bound still never reads below its bytes. Boundary tests added.
 - **2026-10-23** — Review fix F10: the Settings window is clamped into the visible frame **horizontally** as well (left edge kept if it fits, else slid back in; the left edge wins when wider), and the visible frame is the one of the screen the window overlaps most (also while closed), falling back to the main screen — a window left half off a display after a resolution change or display unplug now comes back fully on screen. PURE `SettingsPaneFit.placed` / `visibleFrame(for:screens:fallback:)`, tested.
 
+## Manual checklist — Settings window placement, F10 (2026-10-23, pending)
+
+- [ ] 👤 Two displays: leave Settings straddling the boundary, mostly on one display; close and reopen it → it comes back fully inside the visible frame of the display it overlapped most (not the main display, unless that is the one)
+- [ ] 👤 Push Settings past the **left** edge, then past the **right** edge of a display; close and reopen each time → slid back fully on screen, its left edge kept whenever the window fits
+- [ ] 👤 Leave Settings on the secondary display, close it, unplug that display (or lower its resolution in System Settings → Displays); reopen → fully on a remaining display's visible frame (below the menu bar, clear of the Dock), at either horizontal edge
+
 ## Manual checklist
 
 Status after T7 (2026-10-09). ✅ = exercised by T7 on the real system (live harness on this
