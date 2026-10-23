@@ -111,6 +111,13 @@ enum UserFacingText {
         AlertText(title: "Snappy couldn’t copy the recording.", message: retryMessage(for: error))
     }
 
+    /// Copy from a recording window prepared the file, but the clipboard
+    /// refused it. The window stays open, so Copy can be tried again.
+    static let recordingClipboardFailed = AlertText(
+        title: "Snappy couldn’t copy the recording.",
+        message: "The clipboard didn’t accept it. Try again. If it keeps happening, quit and reopen Snappy."
+    )
+
     /// The button opens System Settings, so the text names the switch rather
     /// than explaining the button (HIG Alerts › Content). The pane has been
     /// "Screen & System Audio Recording" since macOS 15.

@@ -184,7 +184,7 @@ import Testing
         defer { pasteboard.releaseGlobally() }
         let file = URL(fileURLWithPath: "/tmp/Recording 2026-10-09 at 14.32.05.mp4")
 
-        RecordingExport.copyToPasteboard(file, pasteboard: pasteboard)
+        #expect(RecordingExport.copyToPasteboard(file, pasteboard: pasteboard))
 
         let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL]
         #expect(urls == [file])
@@ -250,6 +250,45 @@ import Testing
             context: RecordingWindowContext(savedFiles: savedFiles, mayTakeFocus: { focus.mayTakeFocus }),
             settings: settings, focus: focus.focus, loadVideoInfo: loadVideoInfo
         )
+    }
+
+    /// F4: a clipboard that refuses Copy's file keeps the window (and its
+    /// possibly unsaved take) open and says so; an accepted one closes it.
+    @Test(arguments: [false, true])
+    func copyClosesTheWindowOnlyWhenTheClipboardTookTheFile(accepted: Bool) throws {
+        let take = try makeTake()
+        defer { try? FileManager.default.removeItem(at: take) }
+        let suite = "SnappyTests.RecordingWindowCopy.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var written: [URL] = []
+        let window = RecordingWindowController(
+            take: take, anchorRect: CGRect(x: 0, y: 0, width: 400, height: 300), onRetake: nil,
+            context: RecordingWindowContext(savedFiles: RecordingSavedFiles(), mayTakeFocus: { false }),
+            settings: SettingsStore(defaults: defaults),
+            focus: RecordingWindowFocus(activate: {}, isActive: { false }),
+            loadVideoInfo: { _ in RecordingVideoInfo() },
+            writeToPasteboard: { file in
+                written.append(file)
+                return accepted
+            }
+        )
+        defer { window.close() }
+        var alerts: [AlertText] = []
+        window.onAlertForTesting = { alerts.append($0) }
+        window.show()
+
+        window.perform(.copy)
+
+        #expect(written.count == 1, "the clone was offered to the clipboard")
+        #expect(written.first?.lastPathComponent.hasPrefix("Recording ") == true)
+        if accepted {
+            #expect(!window.isOpen)
+            #expect(alerts.isEmpty)
+        } else {
+            #expect(window.isOpen, "kept open: the take may be unsaved")
+            #expect(alerts == [UserFacingText.recordingClipboardFailed])
+        }
     }
 
     /// Fix round 1, finding 1: the window opens — and takes focus — inside

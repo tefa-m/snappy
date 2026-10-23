@@ -1308,8 +1308,10 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
   a hard link synchronously** before it yields, then copies (never moves) into
   the Save folder, so a take released meanwhile still saves; a missing take is
   refused, never fabricated. Copy pastes the saved file, else a `Recording …
-  .mp4` clone in the temp dir (it outlives the take); if the clone fails the
-  window stays open — the take itself is never put on the pasteboard. **Where
+  .mp4` clone in the temp dir (it outlives the take); if the clone fails, or
+  the pasteboard refuses the file (`copyToPasteboard` returns false), the
+  window stays open with an alert — the take itself is never put on the
+  pasteboard. **Where
   a take was saved belongs to the take, not its window**
   (`RecordingSavedFiles`, owned by the coordinator, shared with every window
   through `RecordingWindowContext`, trimmed to `ledger.kept`): a reopened
