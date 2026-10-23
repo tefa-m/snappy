@@ -213,7 +213,10 @@ Sources/Snappy/
                                  HotKeyBindings (all four combos; conflict,
                                  resetRejection), menuKeyEquivalent,
                                  SettingsPaneFit (clamp + scroll
-                                 when the pane is taller than the screen)
+                                 when the pane is taller than the screen;
+                                 placement clamps both axes into the
+                                 visible frame of the screen the window
+                                 overlaps most, else the main one)
     SettingsWindowController.swift  Single-pane "Snappy Settings": pop-up path
                                  control, Capture area / Capture screen
                                  shortcut fields + Open Keyboard Settings,
