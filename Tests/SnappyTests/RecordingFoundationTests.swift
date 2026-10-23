@@ -400,10 +400,33 @@ struct RecordingTempStoreTests {
         #expect(!FileManager.default.fileExists(atPath: crashed.path(percentEncoded: false)))
     }
 
+    /// B1: a newer legacy take cut off inside its movie header (the `moov`
+    /// header is there, its payload isn't) never displaces an older playable one.
+    @Test func aNewerLegacyTakeWithATruncatedMovieHeaderNeverDisplacesAPlayableOne() throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        let good = try legacyTake(store, MP4Fixture.playableWithMovie, minutesAgo: 5)
+        let partial = try legacyTake(store, MP4Fixture.truncatedAfterMovieHeader, minutesAgo: 0)
+        #expect(!RecordingTempStore.isInProgress(partial))
+        #expect(store.lastTake?.standardizedFileURL == good.standardizedFileURL, "the playable legacy take wins")
+        store.discard(good)
+        #expect(store.lastTake == nil, "only the truncated one is left")
+    }
+
+    @Test(arguments: MP4Fixture.brokenMovies + [MP4Fixture.truncatedAfterMovieHeader])
+    func aMalformedOrTruncatedMoovIsNotPlayable(contents: Data) throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        let url = try legacyTake(store, contents, minutesAgo: 0)
+        #expect(!RecordingTempStore.isPlayable(url))
+    }
+
     @Test(arguments: [
         (MP4Fixture.playable, true),
+        (MP4Fixture.playableWithMovie, true),
         (MP4Fixture.playableAfterLargeBox, true),
         (MP4Fixture.box("moov"), true),
+        (MP4Fixture.header(size: 0, "moov") + Data(count: 16), true), // runs to the end of the file
         (MP4Fixture.unfinished, false),
         (MP4Fixture.truncated, false),
         (MP4Fixture.box("ftyp"), false),

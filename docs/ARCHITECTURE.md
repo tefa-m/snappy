@@ -1305,7 +1305,7 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
   finalized takes are reopenable:** a take is written under an in-progress
   name and `finalizeTake` renames it after the run's `stop()` returned
   (`RecordingCoordinator.finalized`), so a file a force-quit/crash left
-  mid-recording (no moov atom) is never the launch-time `latest` and is
+  mid-recording (no complete moov atom) is never the launch-time `latest` and is
   deleted by the next `prune`. Builds before the in-progress name wrote
   `Take-….mp4` directly, so `lastTake` also requires a top-level `moov` box
   (`RecordingTempStore.isPlayable`, box headers only, bounded) — a legacy

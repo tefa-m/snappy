@@ -90,9 +90,9 @@ struct RecordingTempStore: Sendable {
             .take
     }
 
-    /// True when the file's top-level MP4 boxes include a `moov` — the movie
-    /// header `finishWriting` adds last, so a take cut off mid-recording has
-    /// none. Reads box headers only (at most `maxTopLevelBoxes`), never the
+    /// True when the file's top-level MP4 boxes include a complete `moov` — the
+    /// movie header `finishWriting` adds last, so a take cut off mid-recording
+    /// has none (or only part of one). Reads box headers only (at most `maxTopLevelBoxes`), never the
     /// media; anything unreadable or malformed counts as unplayable.
     static func isPlayable(_ take: URL) -> Bool {
         guard let file = try? FileHandle(forReadingFrom: take) else { return false }
@@ -103,16 +103,20 @@ struct RecordingTempStore: Sendable {
             guard length - offset >= 8, (try? file.seek(toOffset: offset)) != nil,
                   let data = try? file.read(upToCount: 16), data.count >= 8 else { return false }
             let header = [UInt8](data)
-            if header[4..<8].elementsEqual("moov".utf8) { return true }
+            let isMovie = header[4..<8].elementsEqual("moov".utf8)
             var size = header.prefix(4).reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
             var headerSize: UInt64 = 8
+            if size == 0 { // the box runs to the end of the file: nothing after it
+                return isMovie
+            }
             if size == 1 { // 64-bit `largesize` follows the type
                 guard header.count >= 16 else { return false }
                 size = header[8..<16].reduce(UInt64(0)) { $0 << 8 | UInt64($1) }
                 headerSize = 16
             }
-            // 0 = the box runs to the end of the file: nothing after it.
+            // A `moov` counts only once its whole declared extent is on disk.
             guard size >= headerSize, size <= length - offset else { return false }
+            if isMovie { return true }
             offset += size
         }
         return false
