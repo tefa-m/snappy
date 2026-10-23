@@ -272,15 +272,12 @@ private final class PinView: NSView {
             NSMenu.popUpContextMenu(menu, with: event, for: self)
             return
         }
-        if event.clickCount == 2 {
-            onCloseRequested?()
-            return
-        }
         let point = convert(event.locationInWindow, from: nil)
-        if PinGeometry.isInResizeCorner(point, bounds: bounds, cornerSize: Self.cornerHitSize) {
-            isResizing = true
-        } else {
-            window.performDrag(with: event)
+        let inCorner = PinGeometry.isInResizeCorner(point, bounds: bounds, cornerSize: Self.cornerHitSize)
+        switch PinGeometry.mouseDownAction(clickCount: event.clickCount, inResizeCorner: inCorner) {
+        case .resize: isResizing = true
+        case .close: onCloseRequested?()
+        case .drag: window.performDrag(with: event)
         }
     }
 

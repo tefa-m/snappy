@@ -126,7 +126,8 @@ Sources/Snappy/
                                  Record — R hands the area to recording Setup)
   Pin/
     PinGeometry.swift            PURE zoom/corner-resize math, resize-corner
-                                 hit test, toolbar fit — unit-tested
+                                 hit test, mouse-down action (corner beats
+                                 double-click close), toolbar fit — unit-tested
     PinAction.swift              PURE toolbar actions (title/symbol/key/tooltip)
                                  + hover alpha (Reduce Transparency) — tested
     PinWindowController.swift    Always-on-top pinned screenshot windows +

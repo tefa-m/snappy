@@ -108,6 +108,18 @@ import Testing
         #expect(PinGeometry.isInResizeCorner(CGPoint(x: 184, y: 16), bounds: bounds, cornerSize: 16))
     }
 
+    @Test func doubleClickInTheResizeCornerResizesNotCloses() {
+        #expect(PinGeometry.mouseDownAction(clickCount: 2, inResizeCorner: true) == .resize)
+        #expect(PinGeometry.mouseDownAction(clickCount: 1, inResizeCorner: true) == .resize)
+        #expect(PinGeometry.mouseDownAction(clickCount: 3, inResizeCorner: true) == .resize)
+    }
+
+    @Test func doubleClickElsewhereClosesSingleClickDrags() {
+        #expect(PinGeometry.mouseDownAction(clickCount: 2, inResizeCorner: false) == .close)
+        #expect(PinGeometry.mouseDownAction(clickCount: 1, inResizeCorner: false) == .drag)
+        #expect(PinGeometry.mouseDownAction(clickCount: 3, inResizeCorner: false) == .drag)
+    }
+
     @Test func outsideCornerDoesNotResize() {
         #expect(!PinGeometry.isInResizeCorner(CGPoint(x: 183, y: 1), bounds: bounds, cornerSize: 16))
         #expect(!PinGeometry.isInResizeCorner(CGPoint(x: 199, y: 17), bounds: bounds, cornerSize: 16))
