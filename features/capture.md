@@ -168,3 +168,15 @@ Review: `docs/design-reviews/overlays.md`. Nothing here could be eyeballed by th
 - [ ] System Settings → Accessibility → Display → **Reduce Transparency** on → chips are opaque dark grey; off → translucent as before. Also with Increase Contrast on, and both together
 - [ ] The crosshair is shown from the first frame of ⇧⌘4 and stays while moving across displays, with and without Snappy being the active app (tracking-area split)
 - [ ] Captures are pixel-identical to before for the same drag (the crop path did not change); frozen menus still captured; no fade at either end
+
+## Manual checklist — superseded capture results, F3 (2026-10-24, unverified)
+
+The pure tests rebuild `CaptureActivity`/`PendingCaptures` transitions only; these check the coordinator's real wiring (`supersedeAll` calls, request tokens passed through to `handle`).
+
+- [ ] ⇧⌘3, then ⇧⌘4 at once (before the fullscreen preview appears) → the frozen selection overlay stays key: no preview panel over it while it is open, and none after a quick drag either — only the area capture's own panel appears
+- [ ] Same, but cancel the selection with Esc → no fullscreen preview pops up afterwards
+- [ ] Menu → Capture Window, click a window, then ⇧⌘4 right away (within the post-pick wait) → no window-capture panel over the selection or after it
+- [ ] ⇧⌘3, then Menu → Capture Window at once → no fullscreen panel over the window picker or after the pick; only the picked window's panel appears
+- [ ] A superseded capture that fails (e.g. close the picked window during the post-pick wait, then ⇧⌘4) → no error alert over the overlay or after it
+- [ ] After each case above: ⇧⌘3, ⇧⌘4 and a window capture each show their panel normally, and an area recording starts and stops normally (the superseded request released the recording gate)
+- [ ] Two ⇧⌘3 in a row (no area/window session) → behaves as before the fix (non-interactive captures never supersede each other)
