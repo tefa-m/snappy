@@ -529,8 +529,14 @@ for a fullscreen capture or the post-pick window screenshot to deliver, so no
 screenshot panel can land over recording Setup. Those two are tracked **one
 token per request** (`PendingCaptures`, tested), never a per-kind Boolean: the
 screenshot gates let a second ⇧⌘3 or window capture start while the first is
-pending, and a Boolean would be cleared by the first completion. A late capture result while a
-recording is busy is dropped (`dropsCaptureResult`). Inside the recording
+pending, and a Boolean would be cleared by the first completion. **One rule for
+late results** (`CaptureActivity.dropsCaptureResult(superseded:)`): an area
+selection or window pick supersedes every fullscreen / post-pick window capture
+still pending when it starts (`PendingCaptures.supersedeAll`, like it closes a
+panel already up) — that result (panel or error) is dropped whether it lands
+over the overlay or after it closed; and no result presents while an
+interactive session or a recording is busy. Superseded requests still count
+as pending for the recording gate. Inside the recording
 coordinator every callback and async result is scoped to its session id, and a
 cancelled/failed session keeps the coordinator busy until its pipeline's single
 `stop()` has returned (the "draining" state) — see `RecordingCoordinator`.

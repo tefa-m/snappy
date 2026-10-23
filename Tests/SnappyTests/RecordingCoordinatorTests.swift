@@ -1002,7 +1002,7 @@ struct RecordingCoordinatorTests {
 struct CaptureActivityTests {
     @Test func idleBlocksNothing() {
         let idle = CaptureActivity()
-        #expect(!idle.blocksCapture && !idle.blocksRecording && !idle.dropsCaptureResult)
+        #expect(!idle.blocksCapture && !idle.blocksRecording && !idle.dropsCaptureResult(superseded: false))
     }
 
     @Test func captureSessionsBlockBothAsBefore() {
@@ -1029,7 +1029,103 @@ struct CaptureActivityTests {
 
     @Test func aBusyRecordingBlocksCapturesAndDropsLateResults() {
         let activity = CaptureActivity(recordingBusy: true)
-        #expect(activity.blocksCapture && activity.blocksRecording && activity.dropsCaptureResult)
+        #expect(activity.blocksCapture && activity.blocksRecording && activity.dropsCaptureResult(superseded: false))
+    }
+
+    /// F3: no result presents over an open or starting area selection / pick.
+    @Test func anInteractiveSessionDropsResults() {
+        let flags: [WritableKeyPath<CaptureActivity, Bool>] = [
+            \.areaCaptureInFlight, \.areaSelectionOpen, \.windowPickInFlight, \.windowPickOpen,
+        ]
+        for flag in flags {
+            var activity = CaptureActivity()
+            activity[keyPath: flag] = true
+            #expect(activity.interactiveSessionActive)
+            #expect(activity.dropsCaptureResult(superseded: false))
+        }
+        for flag in [\CaptureActivity.windowCaptureInFlight, \.fullscreenCaptureInFlight] {
+            var activity = CaptureActivity()
+            activity[keyPath: flag] = true
+            #expect(!activity.interactiveSessionActive)
+            #expect(!activity.dropsCaptureResult(superseded: false), "another pending capture doesn't drop one")
+        }
+        #expect(CaptureActivity().dropsCaptureResult(superseded: true))
+    }
+}
+
+/// F3: an area selection or window pick supersedes every capture result not
+/// yet delivered. Drives `PendingCaptures` + `CaptureActivity` the way
+/// `CaptureCoordinator` does: `begin` at the request, `supersedeAll` when ⇧⌘4
+/// or a window pick starts, `dropsCaptureResult` at delivery, `end` after it.
+@MainActor
+@Suite("Capture results vs. interactive sessions")
+struct CaptureResultSupersedingTests {
+    private let pending = PendingCaptures()
+
+    private func drops(_ token: PendingCaptures.Token, _ activity: CaptureActivity) -> Bool {
+        activity.dropsCaptureResult(superseded: pending.isSuperseded(token))
+    }
+
+    /// ⇧⌘3, then ⇧⌘4 before the snapshot returns — whether the snapshot
+    /// lands while the frozen overlay is up, or after the drag finished.
+    @Test(arguments: [true, false])
+    func fullscreenThenAreaSelectionNeverPresents(landsWhileSelectionIsOpen: Bool) {
+        let fullscreen = pending.begin(.fullscreen)
+        #expect(!CaptureActivity(fullscreenCaptureInFlight: true).blocksCapture, "⇧⌘4 may start")
+
+        pending.supersedeAll() // captureArea
+        var activity = CaptureActivity(areaCaptureInFlight: true, fullscreenCaptureInFlight: true)
+        if landsWhileSelectionIsOpen {
+            activity.areaCaptureInFlight = false
+            activity.areaSelectionOpen = true
+        } else {
+            activity = CaptureActivity(fullscreenCaptureInFlight: true) // selection already closed
+        }
+        #expect(drops(fullscreen, activity))
+        pending.end(fullscreen)
+        #expect(!pending.isSuperseded(fullscreen))
+
+        // The area crop itself (no request) presents once the overlay is gone.
+        #expect(!CaptureActivity().dropsCaptureResult(superseded: false))
+    }
+
+    /// A window pick finished (100 ms wait + screenshot pending), then ⇧⌘4.
+    @Test(arguments: [true, false])
+    func windowCaptureThenAreaSelectionNeverPresents(landsWhileSelectionIsOpen: Bool) {
+        let window = pending.begin(.window)
+        #expect(!CaptureActivity(windowCaptureInFlight: true).blocksCapture, "⇧⌘4 may start")
+
+        pending.supersedeAll() // captureArea
+        let activity = landsWhileSelectionIsOpen
+            ? CaptureActivity(areaSelectionOpen: true, windowCaptureInFlight: true)
+            : CaptureActivity(windowCaptureInFlight: true)
+        #expect(drops(window, activity))
+        #expect(pending.isPending(.window), "still running: the recording gate keeps waiting for it")
+    }
+
+    @Test func aWindowPickSupersedesAPendingFullscreenCapture() {
+        let fullscreen = pending.begin(.fullscreen)
+        pending.supersedeAll() // captureWindow
+        #expect(drops(fullscreen, CaptureActivity(windowPickOpen: true, fullscreenCaptureInFlight: true)))
+        #expect(drops(fullscreen, CaptureActivity(fullscreenCaptureInFlight: true)), "after the pick too")
+    }
+
+    /// Only requests pending when the session started are superseded: a
+    /// fullscreen capture or window screenshot begun after it still presents.
+    @Test func requestsBegunLaterStillPresent() {
+        let before = pending.begin(.fullscreen)
+        pending.supersedeAll()
+        let after = pending.begin(.window) // the pick's own screenshot
+        #expect(drops(before, CaptureActivity(windowCaptureInFlight: true)))
+        #expect(!drops(after, CaptureActivity(windowCaptureInFlight: true)))
+    }
+
+    /// Unchanged: two ⇧⌘3 in a row both present (the second replaces the first).
+    @Test func fullscreenCapturesDoNotSupersedeEachOther() {
+        let first = pending.begin(.fullscreen)
+        let second = pending.begin(.fullscreen)
+        let activity = CaptureActivity(fullscreenCaptureInFlight: true)
+        #expect(!drops(first, activity) && !drops(second, activity))
     }
 }
 
