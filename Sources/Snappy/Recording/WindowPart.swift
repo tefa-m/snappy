@@ -478,21 +478,50 @@ struct SnapPart: Equatable, Sendable {
 /// window the pick stays where it is until the answer for the latest pointer
 /// position arrives; an older answer is dropped. `onChange` reports a pick
 /// that changed after `pointerMoved` returned.
+///
+/// So a click (or Return) confirms the part **under it**, not the one the
+/// last answer showed, `whenSettled` holds the confirm until the pick
+/// reflects the latest `pointerMoved` — bounded by `settleTimeout`.
 @MainActor
 final class WindowPartModel {
+    typealias Delay = @MainActor (Duration, @escaping @MainActor () -> Void) -> Void
+
+    /// The longest a confirm waits for the tree: one query's worst case
+    /// (`WindowPartAXEngine.queryBudget` plus one call) with room to spare.
+    static let settleTimeout: Duration = .seconds(1)
+
+    static let mainActorDelay: Delay = { delay, work in
+        Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            work()
+        }
+    }
+
     private let tree: (any WindowPartTree)?
+    private let delay: Delay
     private var picking = WindowPartPicking()
     private var scroll = WindowPartScrollStepper()
     private var window: SnapWindow?
     /// The latest request; an answer to any other is stale.
     private var request = 0
     private var isRequesting = false
+    /// The latest tree request while it is unanswered: the pick doesn't
+    /// reflect `point` yet.
+    private var awaiting: (id: Int, point: CGPoint, window: SnapWindow)?
+    /// The confirm `whenSettled` holds; `id` tells its timeout apart from a
+    /// later one's.
+    private var settling: (id: Int, action: @MainActor () -> Void)?
+    private var settleID = 0
     /// The pick changed later than `pointerMoved` (the tree answered).
     var onChange: (@MainActor () -> Void)?
 
-    init(tree: (any WindowPartTree)?) {
+    init(tree: (any WindowPartTree)?, delay: @escaping Delay = WindowPartModel.mainActorDelay) {
         self.tree = tree
+        self.delay = delay
     }
+
+    /// A confirm is waiting for the tree's answer.
+    var isSettling: Bool { settling != nil }
 
     /// The level picked now (nil: nothing hovered).
     var current: WindowPartLevel? { picking.current }
@@ -505,7 +534,11 @@ final class WindowPartModel {
 
     /// The pointer moved (or the tree changed) over `window`; nil window =
     /// over no window.
+    /// A newer position drops a confirm still waiting (`whenSettled`): the
+    /// answer it waited for is stale now.
     func pointerMoved(to point: CGPoint, over window: SnapWindow?) {
+        settling = nil
+        awaiting = nil
         if window != self.window {
             picking.reset()
             scroll.reset()
@@ -516,13 +549,54 @@ final class WindowPartModel {
         guard let window, let tree else { return }
         request += 1
         let id = request
+        awaiting = (id, point, window)
         isRequesting = true
         defer { isRequesting = false }
         tree.requestChain(at: point, in: window) { [weak self] chain in
             guard let self, id == request, window == self.window else { return }
+            awaiting = nil
             apply(chain, at: point, in: window)
             if !isRequesting { onChange?() }
+            runSettled()
         }
+    }
+
+    /// Runs `action` once the pick reflects the latest `pointerMoved` — at
+    /// once when it already does (no tree, over no window, the tree has
+    /// answered), else right after that answer is applied and `onChange`
+    /// has reported it. A newer `pointerMoved`, a newer `whenSettled` or
+    /// `reset` drops it. After `settleTimeout` without an answer the whole
+    /// window at that position is picked (what a tree that doesn't answer
+    /// gives) and `action` runs, so a hung app can't hold the confirm.
+    func whenSettled(_ action: @escaping @MainActor () -> Void) {
+        guard awaiting != nil else {
+            settling = nil
+            return action()
+        }
+        settleID += 1
+        let id = settleID
+        settling = (id, action)
+        delay(Self.settleTimeout) { [weak self] in self?.settleTimedOut(id) }
+    }
+
+    /// Drops a confirm still waiting; the pick goes on following the tree.
+    func cancelSettling() {
+        settling = nil
+    }
+
+    private func settleTimedOut(_ id: Int) {
+        guard settling?.id == id, let awaiting else { return }
+        self.awaiting = nil
+        request += 1 // the late answer is stale now
+        apply(nil, at: awaiting.point, in: awaiting.window)
+        onChange?()
+        runSettled()
+    }
+
+    private func runSettled() {
+        guard let settling else { return }
+        self.settling = nil
+        settling.action()
     }
 
     private func apply(_ chain: WindowPartChain?, at point: CGPoint, in window: SnapWindow) {
@@ -552,6 +626,8 @@ final class WindowPartModel {
         scroll.reset()
         window = nil
         request += 1
+        awaiting = nil
+        settling = nil
     }
 }
 

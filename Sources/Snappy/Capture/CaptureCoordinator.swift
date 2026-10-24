@@ -19,6 +19,13 @@ enum CaptureTrigger {
 /// for *every* capture whose result hasn't been delivered yet
 /// (`blocksRecording`) — a fullscreen snapshot or the window screenshot taken
 /// after a pick would otherwise present its panel over Setup and steal key.
+///
+/// One rule for results (`dropsCaptureResult`): **an area selection or a window
+/// pick supersedes every capture result not yet delivered**, just as starting
+/// one closes a panel that is already up. A fullscreen snapshot or a post-pick
+/// window screenshot still running when ⇧⌘4 or a window pick starts never
+/// presents — not over the overlay, and not after it either (it would replace
+/// the panel of the capture the user chose last).
 struct CaptureActivity: Equatable {
     var areaCaptureInFlight = false
     var areaSelectionOpen = false
@@ -31,9 +38,15 @@ struct CaptureActivity: Equatable {
     /// A recording session is running or draining (`RecordingCoordinator.isBusy`).
     var recordingBusy = false
 
+    /// An area selection or window pick is open, or about to open (its freeze
+    /// or content fetch is in flight).
+    var interactiveSessionActive: Bool {
+        areaCaptureInFlight || areaSelectionOpen || windowPickInFlight || windowPickOpen
+    }
+
     /// Gates the screenshot entry points.
     var blocksCapture: Bool {
-        areaCaptureInFlight || areaSelectionOpen || windowPickInFlight || windowPickOpen || recordingBusy
+        interactiveSessionActive || recordingBusy
     }
 
     /// Gates `RecordingCoordinator.beginSession`.
@@ -41,9 +54,15 @@ struct CaptureActivity: Equatable {
         blocksCapture || windowCaptureInFlight || fullscreenCaptureInFlight
     }
 
-    /// A capture result never presents over a recording session. The gates
-    /// make this unreachable; it is the last line of defence.
-    var dropsCaptureResult: Bool { recordingBusy }
+    /// Whether a finished capture's result (its panel, or its error) is
+    /// dropped. `superseded`: an area selection or window pick started after
+    /// the request did (`PendingCaptures.supersedeAll`). A result never
+    /// presents over a recording session or an interactive one either — the
+    /// gates and `superseded` make those unreachable; they are the last line
+    /// of defence.
+    func dropsCaptureResult(superseded: Bool) -> Bool {
+        superseded || interactiveSessionActive || recordingBusy
+    }
 }
 
 /// Capture requests whose result hasn't been delivered yet, one token per
@@ -67,6 +86,10 @@ final class PendingCaptures {
     }
 
     private var tokens: Set<Token> = []
+    /// Pending requests an area selection or window pick has superseded:
+    /// still running (the recording gate waits for them), but their result
+    /// is dropped.
+    private var superseded: Set<Token> = []
     private var nextID = 0
 
     /// Call synchronously, before the request's first `await`.
@@ -80,6 +103,17 @@ final class PendingCaptures {
     /// Idempotent: ending a token twice is a no-op.
     func end(_ token: Token) {
         tokens.remove(token)
+        superseded.remove(token)
+    }
+
+    /// An area selection or window pick is starting: no request pending now
+    /// may deliver its result. Requests begun later are unaffected.
+    func supersedeAll() {
+        superseded.formUnion(tokens)
+    }
+
+    func isSuperseded(_ token: Token) -> Bool {
+        superseded.contains(token)
     }
 
     func isPending(_ kind: Kind) -> Bool {
@@ -188,8 +222,10 @@ final class CaptureCoordinator {
         guard !captureSessionActive else { return }
         // Only reads state — nothing reaches the screen before the freeze.
         noteUserApp()
-        // A pending panel would sit on top of the overlay — replace it.
+        // A panel would sit on top of the overlay — replace it, and any
+        // result still on its way (`CaptureActivity.dropsCaptureResult`).
         dismissPreviewPanel()
+        pendingCaptures.supersedeAll()
         areaCaptureInFlight = true
 
         Task {
@@ -229,6 +265,7 @@ final class CaptureCoordinator {
         noteUserApp()
         windowPickInFlight = true
         dismissPreviewPanel()
+        pendingCaptures.supersedeAll()
         // Activate before the async content fetch, while the user interaction
         // still counts for cooperative activation.
         NSApp.activate()
@@ -246,7 +283,7 @@ final class CaptureCoordinator {
                     let token = self.pendingCaptures.begin(.window)
                     Task {
                         await self.pendingCaptures.finishing(token) {
-                            await self.performWindowCapture(selection)
+                            await self.performWindowCapture(selection, request: token)
                         }
                     }
                 }
@@ -271,12 +308,12 @@ final class CaptureCoordinator {
         let token = pendingCaptures.begin(.fullscreen)
         Task {
             await pendingCaptures.finishing(token) {
-                await performFullscreenCapture(trigger: trigger)
+                await performFullscreenCapture(trigger: trigger, request: token)
             }
         }
     }
 
-    private func performFullscreenCapture(trigger: CaptureTrigger) async {
+    private func performFullscreenCapture(trigger: CaptureTrigger, request: PendingCaptures.Token) async {
         // Only the menu path waits — for Snappy's *own* menu to fade.
         if let delay = trigger.menuFadeDelay {
             try? await Task.sleep(for: delay)
@@ -284,9 +321,10 @@ final class CaptureCoordinator {
         guard let screen = screenUnderMouse() else { return }
         do {
             let frozen = try await CaptureEngine.snapshot(of: screen)
-            handle(frozen.image, anchorRect: frozen.frame, screen: frozen.screen, scale: frozen.scale)
+            handle(frozen.image, anchorRect: frozen.frame, screen: frozen.screen, scale: frozen.scale, request: request)
             CaptureEngine.primeShareableContentCache()
         } catch {
+            guard !dropsResult(of: request) else { return }
             handle(error)
         }
     }
@@ -311,14 +349,15 @@ final class CaptureCoordinator {
         handle(image, anchorRect: selection.globalRect, screen: frozen.screen, scale: frozen.scale)
     }
 
-    private func performWindowCapture(_ selection: SCWindowSelection) async {
+    private func performWindowCapture(_ selection: SCWindowSelection, request: PendingCaptures.Token) async {
         try? await Task.sleep(for: .milliseconds(100))
         do {
             let image = try await CaptureEngine.captureWindow(selection.window, scale: selection.scale)
             let screen = selection.screen ?? screenUnderMouse() ?? NSScreen.main
             guard let screen else { return }
-            handle(image, anchorRect: selection.appKitFrame, screen: screen, scale: selection.scale)
+            handle(image, anchorRect: selection.appKitFrame, screen: screen, scale: selection.scale, request: request)
         } catch {
+            guard !dropsResult(of: request) else { return }
             handle(error)
         }
     }
@@ -327,9 +366,13 @@ final class CaptureCoordinator {
 
     /// `scale` is the image's own pixels-per-point — for frozen captures that is
     /// the snapshot's derived scale, which can differ from the screen's backing
-    /// scale by a rounding step. Pins size 1:1 from it.
-    private func handle(_ image: CGImage, anchorRect: CGRect, screen: NSScreen, scale: CGFloat) {
-        guard !activity.dropsCaptureResult else { return }
+    /// scale by a rounding step. Pins size 1:1 from it. `request`: the pending
+    /// fullscreen or window capture this result belongs to (nil for an area
+    /// crop, delivered synchronously as its selection closes).
+    private func handle(
+        _ image: CGImage, anchorRect: CGRect, screen: NSScreen, scale: CGFloat, request: PendingCaptures.Token? = nil
+    ) {
+        guard !dropsResult(of: request) else { return }
         dismissPreviewPanel()
         let panel = PreviewPanelController(
             image: image,
@@ -340,6 +383,11 @@ final class CaptureCoordinator {
         )
         previewPanel = panel
         panel.show(on: screen)
+    }
+
+    /// `CaptureActivity.dropsCaptureResult` for one request's result.
+    private func dropsResult(of request: PendingCaptures.Token?) -> Bool {
+        activity.dropsCaptureResult(superseded: request.map(pendingCaptures.isSuperseded) ?? false)
     }
 
     private func dismissPreviewPanel() {

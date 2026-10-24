@@ -515,6 +515,175 @@ struct WindowPartAsyncModelTests {
     }
 }
 
+/// Collects `WindowPartModel`'s delayed work so a test fires the confirm
+/// timeout when it wants.
+@MainActor
+final class FakeDelays {
+    private(set) var pending: [(delay: Duration, work: @MainActor () -> Void)] = []
+
+    var delay: WindowPartModel.Delay {
+        { [weak self] delay, work in self?.pending.append((delay, work)) }
+    }
+
+    func fire() {
+        let due = pending
+        pending = []
+        for item in due { item.work() }
+    }
+}
+
+/// F1 (review 2026-10-23): a click confirmed the part the *last* answer
+/// showed — the tree answers the click point later. The confirm now waits
+/// for that answer (`whenSettled`), bounded by `settleTimeout`.
+@MainActor
+@Suite("Window parts — confirming a pick")
+struct WindowPartConfirmTests {
+    /// A model whose last answer picked the sidebar, now waiting for the
+    /// tree's answer at the editor (the click point).
+    func clickedOnTheEditorBeforeTheTreeAnswered() -> (FakeTree, WindowPartModel, FakeDelays) {
+        let tree = vsCodeLike()
+        let delays = FakeDelays()
+        let model = WindowPartModel(tree: tree, delay: delays.delay)
+        model.pointerMoved(to: tree.point(150, 400), over: tree.window)
+        tree.defersAnswers = true
+        model.pointerMoved(to: tree.point(900, 400), over: tree.window)
+        return (tree, model, delays)
+    }
+
+    @Test func aClickConfirmsThePartUnderItNotTheOneBefore() {
+        let (tree, model, _) = clickedOnTheEditorBeforeTheTreeAnswered()
+        #expect(model.part?.name == "Files Explorer", "the race: the pick is still the sidebar")
+        var confirmed: [String?] = []
+        var events: [String] = []
+        model.onChange = { events.append("change") }
+        model.whenSettled {
+            events.append("confirm")
+            confirmed.append(model.part?.name)
+        }
+        #expect(confirmed.isEmpty, "held until the tree answers for the click point")
+        #expect(model.isSettling)
+        tree.answer()
+        #expect(confirmed == ["Main content"])
+        #expect(events == ["change", "confirm"], "the new pick is reported before it is confirmed")
+        #expect(!model.isSettling)
+    }
+
+    @Test func withoutATreeItConfirmsAtOnce() {
+        let tree = vsCodeLike()
+        let delays = FakeDelays()
+        let model = WindowPartModel(tree: nil, delay: delays.delay)
+        model.pointerMoved(to: tree.point(900, 400), over: tree.window)
+        var confirmed: [Bool] = []
+        model.whenSettled { confirmed.append(model.current?.isWholeWindow == true) }
+        #expect(confirmed == [true])
+        #expect(delays.pending.isEmpty)
+    }
+
+    @Test func anAnsweredPickConfirmsAtOnce() {
+        let tree = vsCodeLike()
+        let model = WindowPartModel(tree: tree, delay: FakeDelays().delay)
+        model.pointerMoved(to: tree.point(900, 400), over: tree.window)
+        var confirmed: [String?] = []
+        model.whenSettled { confirmed.append(model.part?.name) }
+        #expect(confirmed == ["Main content"])
+    }
+
+    @Test func overNoWindowItRunsAtOnce() {
+        let tree = vsCodeLike()
+        tree.defersAnswers = true
+        let model = WindowPartModel(tree: tree, delay: FakeDelays().delay)
+        model.pointerMoved(to: tree.point(900, 400), over: tree.window)
+        model.pointerMoved(to: CGPoint(x: 5000, y: 5000), over: nil)
+        var runs = 0
+        model.whenSettled { runs += 1 }
+        #expect(runs == 1)
+        #expect(model.current == nil)
+    }
+
+    @Test func aNewerPointerMoveDropsTheConfirm() {
+        let (tree, model, delays) = clickedOnTheEditorBeforeTheTreeAnswered()
+        var runs = 0
+        model.whenSettled { runs += 1 }
+        model.pointerMoved(to: tree.point(150, 400), over: tree.window)
+        #expect(!model.isSettling)
+        tree.answer()
+        delays.fire()
+        #expect(runs == 0)
+    }
+
+    @Test func aResetDropsTheConfirm() {
+        let (tree, model, delays) = clickedOnTheEditorBeforeTheTreeAnswered()
+        var runs = 0
+        model.whenSettled { runs += 1 }
+        model.reset()
+        tree.answer()
+        delays.fire()
+        #expect(runs == 0)
+    }
+
+    @Test func cancellingDropsTheConfirmButNotThePick() {
+        let (tree, model, delays) = clickedOnTheEditorBeforeTheTreeAnswered()
+        var runs = 0
+        model.whenSettled { runs += 1 }
+        model.cancelSettling()
+        #expect(!model.isSettling)
+        tree.answer()
+        delays.fire()
+        #expect(runs == 0)
+        #expect(model.part?.name == "Main content")
+    }
+
+    @Test func aSecondClickSupersedesTheFirst() {
+        let (tree, model, delays) = clickedOnTheEditorBeforeTheTreeAnswered()
+        var confirmed: [String] = []
+        model.whenSettled { confirmed.append("first") }
+        model.pointerMoved(to: tree.point(150, 400), over: tree.window)
+        model.whenSettled { confirmed.append("second: \(model.part?.name ?? "-")") }
+        tree.answer()
+        delays.fire()
+        #expect(confirmed == ["second: Files Explorer"])
+    }
+
+    @Test func aTreeThatNeverAnswersConfirmsTheWholeWindowAfterTheTimeout() {
+        let (tree, model, delays) = clickedOnTheEditorBeforeTheTreeAnswered()
+        var confirmed: [Bool] = []
+        var changes = 0
+        model.onChange = { changes += 1 }
+        model.whenSettled { confirmed.append(model.current?.isWholeWindow == true) }
+        #expect(delays.pending.map(\.delay) == [WindowPartModel.settleTimeout])
+        delays.fire()
+        #expect(confirmed == [true], "never the stale sidebar")
+        #expect(changes == 1)
+        // The late answer is stale now: the confirmed pick stays.
+        tree.answer()
+        #expect(model.current?.isWholeWindow == true)
+        #expect(confirmed.count == 1)
+    }
+
+    @Test func theTimeoutAfterTheAnswerDoesNothing() {
+        let (tree, model, delays) = clickedOnTheEditorBeforeTheTreeAnswered()
+        var runs = 0
+        model.whenSettled { runs += 1 }
+        tree.answer()
+        delays.fire()
+        #expect(runs == 1)
+        #expect(model.part?.name == "Main content")
+    }
+
+    @Test func aStaleTimeoutDoesNotFireALaterConfirm() {
+        let (tree, model, delays) = clickedOnTheEditorBeforeTheTreeAnswered()
+        var confirmed: [String] = []
+        model.whenSettled { confirmed.append("first") }
+        let firstTimeout = delays.pending
+        model.pointerMoved(to: tree.point(900, 400), over: tree.window)
+        model.whenSettled { confirmed.append("second") }
+        firstTimeout.first?.work()
+        #expect(confirmed.isEmpty, "the first click's timeout belongs to the first click")
+        tree.answer()
+        #expect(confirmed == ["second"])
+    }
+}
+
 @MainActor
 @Suite("Window parts — override, scroll, keys")
 struct WindowPartOverrideTests {

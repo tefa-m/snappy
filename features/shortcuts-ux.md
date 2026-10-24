@@ -17,7 +17,7 @@ Every action and tool — in every current **and future** feature — ships with
 | Editor | **⌘P** | Pin the annotated image + close the editor |
 | Editor | **⌘Z / ⇧⌘Z** | Undo / Redo |
 | Pin (must be key — click it first) | **E / C** | Edit (closes the pin, opens the editor) / Copy (pin stays open) |
-| Everywhere transient | **Q / Esc** | Close / dismiss (editor, panel, pins) |
+| Everywhere transient | **Q / Esc** | Close / dismiss (editor, panel, pins) — bare Q only (Shift / Caps Lock tolerated); panel and pins via `OverlayKeys.isCancel` |
 | Area-selection & window-pick overlays | **Q / Esc** | Cancel the capture (`OverlayKeys`) |
 | Settings window | **⌘W** · **⌘X / ⌘C / ⌘V / ⌘A** | Close · Cut / Copy / Paste / Select All in its text field (`SettingsKeyCommand` — no main menu supplies them) |
 | Global | **⇧⌘4** (remappable) | Area capture (requires the system's ⇧⌘4 to be disabled); during a recording session: stops a recording, ignored otherwise (`CaptureHotKeyRoute`) |
@@ -83,3 +83,4 @@ Only Snappy's **four global hot keys** can be remapped — **Capture Area (⇧�
 - **2026-10-20** — **Remappable global hot keys** (Tefa-approved design, see the section above): the four global hot keys are click-to-record fields in Settings, applied live via `GlobalHotKeys` (bind first, save only on success, old combo kept on refusal), the center suspended while a recorder waits; menu, Stop tooltip and the ● menu read the live combos. Single-letter keys stay fixed.
 - **2026-10-20** — **Export size** in the recording window (`features/recording.md` › Export size): bare **[** "Smaller export ([)" and **]** "Larger export (])" step the status capsule's slider; **Esc / Q / ⌘W** during a re-encode cancel only the re-encode. No clash with the recording session's own [ ] (Magic Pen / ink thickness), which only reach the Setup overlay and the ink panel.
 - **2026-10-20** — Remap review fix round 1: closing/deactivating Settings mid-record resumes the hot keys; `replace` holds the new combo before releasing the old, a recorder binds before resuming, a refused or lost registration is kept and retried (also by re-recording the stored combo) with an inline "taken" line; **one ⌘/⌃/⌥ rule for all four** (Creator decision — ⌘D/⌘P allowed); refusal copy exactly "That shortcut is already taken" (Creator decision); the ● tooltip follows the Capture Area combo; labels follow the keyboard layout (`KeyLegend`).
+- **2026-10-23** — Review fix F8: the preview panel and pins matched Q regardless of modifiers; both now share the overlays' `OverlayKeys.isCancel` (Esc, or bare Q — ⌘/⌥/⌃+Q no longer close).

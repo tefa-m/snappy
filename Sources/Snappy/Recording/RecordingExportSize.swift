@@ -101,7 +101,8 @@ enum ExportSizing {
 /// PURE status-capsule readouts for the export size — tested.
 enum ExportSizeText {
     /// "18.4 MB" — decimal units like Finder: KB below 1 MB, one decimal
-    /// from MB up (none from 100 MB), GB from 1000 MB. `roundingUp` for a
+    /// from MB up (none from 100 MB), GB from 1000 MB — decided on the
+    /// rounded value, so a readout never shows "1000 KB" or "1000 MB". `roundingUp` for a
     /// bound, so the readout is never below the bytes it stands for.
     static func bytes(_ count: Int64, roundingUp: Bool = false) -> String {
         let count = max(0, count)
@@ -110,13 +111,18 @@ enum ExportSizeText {
         func units(_ step: Int64) -> Int64 {
             roundingUp ? (count + step - 1) / step : (count + step / 2) / step
         }
-        if count < 1_000_000 { return "\(max(1, (count + 999) / 1000)) KB" }
-        let (unit, name): (Int64, String) = count < 1_000_000_000 ? (1_000_000, "MB") : (1_000_000_000, "GB")
-        if count < 100 * unit {
+        // Each format is used only while its *rounded* value stays below
+        // the next boundary, so 999 999 bytes read "1.0 MB" (not "1000 KB"),
+        // 99.99 MB "100 MB" and 999.9 MB "1.0 GB".
+        let kilobytes = max(1, (count + 999) / 1000)
+        if kilobytes < 1000 { return "\(kilobytes) KB" }
+        for (unit, name) in [(Int64(1_000_000), "MB"), (1_000_000_000, "GB")] {
             let tenths = units(unit / 10)
-            return "\(tenths / 10).\(tenths % 10) \(name)"
+            if tenths < 1000 { return "\(tenths / 10).\(tenths % 10) \(name)" }
+            let whole = units(unit)
+            if whole < 1000 || name == "GB" { return "\(whole) \(name)" }
         }
-        return "\(units(unit)) \(name)"
+        return ""
     }
 
     /// The size readout: the real file's size when one exists for the stop

@@ -91,11 +91,12 @@ enum RecordingExport {
     }
 
     /// Puts `file` on `pasteboard` as a file URL (`NSURL`), which Finder
-    /// pastes as a copy of the file and Slack uploads.
+    /// pastes as a copy of the file and Slack uploads. False when the
+    /// pasteboard refused the write — nothing was copied.
     @MainActor
-    static func copyToPasteboard(_ file: URL, pasteboard: NSPasteboard = .general) {
+    static func copyToPasteboard(_ file: URL, pasteboard: NSPasteboard = .general) -> Bool {
         pasteboard.clearContents()
-        pasteboard.writeObjects([file as NSURL])
+        return pasteboard.writeObjects([file as NSURL])
     }
 }
 
