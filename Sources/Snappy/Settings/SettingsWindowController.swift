@@ -834,11 +834,7 @@ private final class HotKeyField: NSObject {
         recorder.onRecordingChange = { [hotKeys] active in hotKeys.setRecorderActive(active) }
         // A combo or its label changed elsewhere (a layout switch, the other
         // field); a hot key went live or was lost (resume, retry).
-        hotKeys.onChange.append { [weak self] changed, combo in
-            guard let self, changed == self.hotKey, !self.recorder.isRecording else { return }
-            self.show(combo)
-        }
-        hotKeys.onStatusChange.append { [weak self] in
+        hotKeys.observeLabels { [weak self] in
             guard let self, !self.recorder.isRecording else { return }
             self.show(hotKeys.bindings[hotKey])
             self.showFeedback(nil)

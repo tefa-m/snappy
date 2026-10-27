@@ -54,17 +54,6 @@ final class GlobalHotKeys {
 
     private var labelObservers: [@MainActor () -> Void] = []
 
-    /// A combo changed (after it was bound and saved), or its label did (the
-    /// keyboard layout changed — `keyboardLayoutDidChange`) — the menu bar
-    /// item's and the recording toolbar's Stop tooltips and the Settings
-    /// fields follow.
-    var onChange: [@MainActor (SnappyHotKey, HotKeyCombo) -> Void] = []
-
-    /// Which hot keys are live may have changed (a resume, a retry) — the
-    /// Settings fields re-check `isLive`, and the Stop labels (recording
-    /// toolbar, menu bar ●) `liveStopCombo`.
-    var onStatusChange: [@MainActor () -> Void] = []
-
     /// `center` nil (tests, or no Carbon): combos are only validated and saved.
     init(settings: SettingsStore = .shared, center: (any HotKeyRebinding)?) {
         self.settings = settings
@@ -168,12 +157,11 @@ final class GlobalHotKeys {
         let wasLive = isLive(hotKey)
         guard bind(hotKey, to: combo) else { return .unavailable(combo) }
         if unchanged {
-            if !wasLive { notifyStatusChange() }
+            if !wasLive { notifyLabels() }
             return nil
         }
         bindings[hotKey] = combo
         settings.hotKeyBindings = bindings
-        for listener in onChange { listener(hotKey, combo) }
         notifyLabels()
         return nil
     }
@@ -191,16 +179,13 @@ final class GlobalHotKeys {
     func retryUnbound() {
         guard let center else { return }
         center.retryUnbound()
-        notifyStatusChange()
+        notifyLabels()
     }
 
     /// The keyboard layout changed: every combo keeps its key code (what
-    /// Carbon binds) but may now read differently — re-announce all four.
+    /// Carbon binds) but may now read differently — every label is re-read.
     func keyboardLayoutDidChange() {
         KeyLegend.invalidate()
-        for hotKey in SnappyHotKey.allCases {
-            for listener in onChange { listener(hotKey, bindings[hotKey]) }
-        }
         notifyLabels()
     }
 
@@ -214,15 +199,10 @@ final class GlobalHotKeys {
     /// meanwhile no hot key swallows its combo, so ⇧⌘4 reaches the recorder
     /// (and is refused as already Snappy's) instead of starting a capture.
     /// Resuming may find a combo taken meanwhile: it stays registered,
-    /// unbound, and the fields are told (`onStatusChange`).
+    /// unbound, and the observers are told (`observeLabels`).
     func setRecorderActive(_ active: Bool) {
         center?.setSuspended(active)
-        if !active { notifyStatusChange() }
-    }
-
-    private func notifyStatusChange() {
-        for listener in onStatusChange { listener() }
-        notifyLabels()
+        if !active { notifyLabels() }
     }
 
     private func notifyLabels() {
