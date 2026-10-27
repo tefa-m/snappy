@@ -907,8 +907,9 @@ is still a transparent `NSWindow`.
   (unshifted, then shifted for AZERTY digits; ASCII letters/digits only, else
   the US name — as macOS does on non-Latin layouts). The TIS API aborts off
   the main thread, so only the main thread reads it (elsewhere: US). On
-  `kTISNotifySelectedKeyboardInputSourceChanged` the AppDelegate clears the
-  cache and `GlobalHotKeys.keyboardLayoutDidChange` fires `observeLabels`,
+  `kTISNotifySelectedKeyboardInputSourceChanged` the AppDelegate calls
+  `GlobalHotKeys.keyboardLayoutDidChange`, which clears the `KeyLegend`
+  cache and fires `observeLabels`,
   so Settings, the ● tooltip and the toolbar re-label.
 
 ### Annotation editor (M4–M6)

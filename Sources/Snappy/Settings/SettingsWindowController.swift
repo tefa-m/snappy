@@ -836,7 +836,7 @@ private final class HotKeyField: NSObject {
         // field); a hot key went live or was lost (resume, retry).
         hotKeys.observeLabels { [weak self] in
             guard let self, !self.recorder.isRecording else { return }
-            self.show(hotKeys.bindings[hotKey])
+            self.show(self.hotKeys.bindings[self.hotKey])
             self.showFeedback(nil)
         }
         resetButton.target = self
