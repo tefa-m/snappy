@@ -105,17 +105,36 @@ Sources/Snappy/
                                  context-sensitive (no session → capture ·
                                  recording → stop · rest of a session →
                                  ignored) — tested
-    GlobalHotKeys.swift          The four remappable hot keys' live side:
-                                 `set`/`reset` validate (another Snappy hot
-                                 key's combo refused), bind (capture keys via
-                                 `replace`; session keys via the coordinator
-                                 mid-session, else `isAvailable`) and only
-                                 then save + `onChange` (menu, Stop tooltips,
-                                 Settings fields; also on a layout change);
-                                 the stored combo again = retry; `isLive` /
-                                 `onStatusChange` for the fields' "taken"
-                                 line; `HotKeyRebinding` seam — tested with
-                                 a fake
+    HotKeyBindings.swift         PURE hot key values — tested: SnappyHotKey (the
+                                 four remappable hot keys: names, defaults,
+                                 actions, each reserves the other three),
+                                 HotKeyBindings (all four combos; conflict,
+                                 resetRejection), ReservedHotKey,
+                                 HotKeyRecorderInput (shortcut recorders:
+                                 one rule for all four — at least one of
+                                 ⌘/⌃/⌥ — letters/digits, Snappy's own hot
+                                 keys refused, `.unavailable` when the
+                                 system refuses)
+    GlobalHotKeys.swift          The four remappable hot keys' live side and
+                                 the ONLY owner of `HotKeyCenter` (AppDelegate
+                                 and RecordingCoordinator never touch it):
+                                 `installCaptureKeys` (⇧⌘4/⇧⌘3 for the app's
+                                 lifetime, ⇧⌘4 routed by `CaptureHotKeyRoute`;
+                                 AppDelegate supplies the press handlers),
+                                 `beginSession` (⌃⌥D/⌃⌥P; returns the refused
+                                 keys) / `endSession`; `set`/`reset` validate
+                                 (another Snappy hot key's combo refused),
+                                 bind (capture keys via `replace`; session
+                                 keys rebound live mid-session, else
+                                 `isAvailable`) and only then save; the stored
+                                 combo again = retry; read through
+                                 `label(for:)` (advertised text, nil when not
+                                 live), `isLive`, `bindings` + ONE
+                                 `observeLabels` signal (a bind, a layout
+                                 change, a resume/retry) — menu bar ●, the
+                                 recording toolbar and the Settings fields
+                                 re-read on it; `HotKeyRebinding` seam
+                                 (HotKeyCenter | fake) — tested with a fake
     KeyLegend.swift              A key code's label on the current keyboard
                                  layout (TIS + UCKeyTranslate, main thread
                                  only, cached until the layout changes),
@@ -204,16 +223,7 @@ Sources/Snappy/
                                  (⌘W/X/C/V/A), SaveFolderValidation (only an
                                  existing local directory — the path control
                                  accepts drops), CanvasPaddingInput,
-                                 RecordingSettingsText, ReservedHotKey,
-                                 HotKeyRecorderInput (shortcut recorders:
-                                 one rule for all four — at least one of
-                                 ⌘/⌃/⌥ — letters/digits, Snappy's own hot
-                                 keys refused, `.unavailable` when the
-                                 system refuses), SnappyHotKey (the four
-                                 remappable hot keys: names, defaults,
-                                 actions, each reserves the other three),
-                                 HotKeyBindings (all four combos; conflict,
-                                 resetRejection), menuKeyEquivalent,
+                                 RecordingSettingsText, menuKeyEquivalent,
                                  SettingsPaneFit (clamp + scroll
                                  when the pane is taller than the screen;
                                  placement clamps both axes into the
@@ -298,8 +308,10 @@ Sources/Snappy/Recording/        Screen recording with live annotations
                                  session → push to pieces + side effects
                                  (countdown, pipeline, recording windows —
                                  owned in an array, take ledger — ⌃⌥D through
-                                 SessionHotKeyRegistering + a banner when it's
-                                 refused, focus hand-back, onCaptureStart for
+                                 the narrow `RecordingHotKeys` protocol
+                                 (GlobalHotKeys | fake: begin/end session,
+                                 `label(for:)`, `observeLabels`) + a banner
+                                 per refused key, focus hand-back, onCaptureStart for
                                  the menu bar clock; ⌃⌥P likewise, never the
                                  ⌃⌥D combo; setMagicPenWidth — persisted,
                                  pushed live); talks to the pieces only
@@ -439,7 +451,7 @@ Sources/Snappy/Recording/        Screen recording with live annotations
 ## Capture flow
 
 ```
-⇧⌘4 (HotKeyCenter → captureArea(.hotKey)) or menu item (.menu)
+⇧⌘4 (GlobalHotKeys → HotKeyCenter → captureArea(.hotKey)) or menu item (.menu)
   → [.menu only] 250 ms status-menu fade
   → CaptureEngine.snapshotAllScreens()  ← BEFORE anything of ours is on screen:
       an open context menu / menu-bar menu / tooltip is still there and lands in
@@ -512,8 +524,8 @@ menu item → captureWindow   (unchanged: activates synchronously, then picks)
              unless it is the latest) · menu "Reopen Last Recording" fronts its open window
 ```
 
-`AppDelegate` owns the `CaptureCoordinator`, the `StatusItemController`, and the
-`HotKeyCenter`; the coordinator owns the preview panel, the pin collection, and
+`AppDelegate` owns the `CaptureCoordinator`, the `StatusItemController`, and
+`GlobalHotKeys` (which owns the one `HotKeyCenter`); the coordinator owns the preview panel, the pin collection, and
 the **editor collection** (`editors`, like `pins`). The `RecordingCoordinator`
 owns the **recording windows** the same way (`windows`, released in each
 window's `onClose`, a run-loop turn after the close).
@@ -855,8 +867,9 @@ is still a transparent `NSWindow`.
   the new combo **before** releasing the old one (Carbon allows two refs under
   one `EventHotKeyID`), so a refusal leaves the old binding untouched and
   there is no rollback that could itself fail; session keys are rebound by
-  `RecordingCoordinator.rebindSessionHotKey` mid-session (or probed with
-  `isAvailable` outside one), so the store never holds a combo that doesn't
+  `GlobalHotKeys` itself mid-session (it holds the session's press handlers
+  from `beginSession`; outside a session the combo is probed with
+  `isAvailable`), so the store never holds a combo that doesn't
   work and a refusal leaves the old one live. The availability probe uses its
   own `HotKeyAction.availabilityProbe` id (never left registered) — still the
   one center and handler. While a Settings recorder waits for a key the center
@@ -877,8 +890,16 @@ is still a transparent `NSWindow`.
   Settings becomes key, when the app becomes active, and when the same combo
   is recorded again. Every place that names a hot key reads the live combo
   (menu key equivalents in `validateMenuItem`, the recording ● menu's Stop,
-  the ●'s tooltip — set on entering recording and updated by `onChange` —,
-  the toolbar's Stop tooltip via `setStopShortcut`, the Settings fields).
+  the ●'s tooltip, the toolbar's Stop / Draw Mode / Magic Pen tooltips, the
+  Settings fields) — **pulled**, never pushed: `GlobalHotKeys.label(for:)`
+  (nil while not live) and `isLive`, re-read on the one `observeLabels`
+  signal. There is no per-key change callback.
+- **`GlobalHotKeys` is the only owner of `HotKeyCenter`** (2026-10-27). It
+  creates the one center (`GlobalHotKeys()`), registers the capture keys
+  (`installCaptureKeys`) and the session keys (`beginSession` /
+  `endSession`); AppDelegate supplies press handlers only, and
+  `RecordingCoordinator` sees just `RecordingHotKeys`. `HotKeyRebinding` is
+  the module's one internal seam (HotKeyCenter | test fake).
 - **Hot key labels follow the keyboard layout; key codes don't.** A
   `HotKeyCombo` stores the virtual key code (the physical key — what Carbon
   binds and what the recorder receives as `NSEvent.keyCode`). Its label comes
@@ -887,8 +908,8 @@ is still a transparent `NSWindow`.
   the US name — as macOS does on non-Latin layouts). The TIS API aborts off
   the main thread, so only the main thread reads it (elsewhere: US). On
   `kTISNotifySelectedKeyboardInputSourceChanged` the AppDelegate clears the
-  cache and `GlobalHotKeys.keyboardLayoutDidChange` re-announces all four
-  combos, so Settings, the ● tooltip and the toolbar re-label.
+  cache and `GlobalHotKeys.keyboardLayoutDidChange` fires `observeLabels`,
+  so Settings, the ● tooltip and the toolbar re-label.
 
 ### Annotation editor (M4–M6)
 
@@ -1277,16 +1298,18 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
 - **⇧⌘4 is context-sensitive** (`CaptureHotKeyRoute`: no session → capture ·
   recording → stop · rest of a session → ignored). The draw-mode toggle
   (⌃⌥D by default) is registered through the single `HotKeyCenter` **only
-  while a session is active**. Like every Snappy hot key its combo needs at
+  while a session is active** (`GlobalHotKeys.beginSession` / `endSession`). Like every Snappy hot key its combo needs at
   least one of ⌘/⌃/⌥ (Creator decision 2026-10-20, replacing the 2026-10-09
   ⌃/⌥-only rule — so ⌘D / ⌘P are allowed; a ⌘ combo is swallowed system-wide
   for the session, which is the person's call). **A registration the
   system refuses** (another app owns the combo) is never silent: the
-  coordinator posts a banner (`UserFacingText.drawModeHotKeyUnavailable`,
+  coordinator posts a banner per key `beginSession` returns as refused
+  (`UserFacingText.drawModeHotKeyUnavailable`,
   beep + VoiceOver if banners are off), the chrome is told
   (`setDrawModeShortcut(nil)`) so no tooltip advertises a dead shortcut, and
   the toolbar's draw toggle still works. `HotKeyCenter.register` reports the
-  result; `isRegistered` reflects a live Carbon ref. The capture hot key's
+  result; `isRegistered` reflects a live Carbon ref; the toolbar reads
+  `label(for:)`. The capture hot key's
   combo is configurable: Stop's tooltip names it (`setStopShortcut`), and a
   Settings change of any hot key applies to a running session at once.
 - **One session at a time, scoped and drained.** Capture and recording block
