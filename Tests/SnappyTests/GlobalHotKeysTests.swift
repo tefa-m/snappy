@@ -21,6 +21,25 @@ struct GlobalHotKeysTests {
         private(set) var retries = 0
         /// Every call, in order: "suspend", "resume", "replace", "probe".
         private(set) var log: [String] = []
+        /// Registered presses, by action.
+        var handlers: [HotKeyAction: @MainActor () -> Void] = [:]
+        private(set) var unregistered: [HotKeyAction] = []
+        func register(_ action: HotKeyAction, combo: HotKeyCombo, handler: @escaping @MainActor () -> Void) -> Bool {
+            combos[action] = combo
+            handlers[action] = handler
+            guard !taken.contains(combo.key) else {
+                unbound.insert(action)
+                return false
+            }
+            unbound.remove(action)
+            return true
+        }
+        func unregister(_ action: HotKeyAction) {
+            unregistered.append(action)
+            combos[action] = nil
+            handlers[action] = nil
+            unbound.remove(action)
+        }
         func replace(_ action: HotKeyAction, with combo: HotKeyCombo) -> Bool {
             log.append("replace")
             guard !taken.contains(combo.key) else { return false }
@@ -60,6 +79,31 @@ struct GlobalHotKeysTests {
 
     private static let ctrlOptX = HotKeyCombo(keyCode: UInt32(kVK_ANSI_X), carbonModifiers: UInt32(controlKey | optionKey))
     private static let cmdOpt5 = HotKeyCombo(keyCode: UInt32(kVK_ANSI_5), carbonModifiers: UInt32(cmdKey | optionKey))
+
+    @Test func theCaptureKeysAreRegisteredWithTheStoredCombosAndRouted() throws {
+        var bindings = HotKeyBindings.defaults
+        bindings.captureArea = Self.cmdOpt5
+        settings.hotKeyBindings = bindings
+        var phase: RecordingPhase?
+        var presses: [String] = []
+        hotKeys.installCaptureKeys(
+            phase: { phase },
+            onCaptureArea: { presses.append("area") },
+            onStopRecording: { presses.append("stop") },
+            onCaptureFullscreen: { presses.append("fullscreen") }
+        )
+        #expect(center.combos[.captureArea] == Self.cmdOpt5)
+        #expect(center.combos[.captureFullscreen] == .defaultFullscreen)
+        let area = try #require(center.handlers[.captureArea])
+        area()
+        phase = .recording(.interact)
+        area()
+        phase = .setup(.pointer)
+        area()
+        let fullscreen = try #require(center.handlers[.captureFullscreen])
+        fullscreen()
+        #expect(presses == ["area", "stop", "fullscreen"])
+    }
 
     @Test func aCaptureComboIsReplacedLiveThenSavedAndAnnounced() {
         var changes: [(SnappyHotKey, HotKeyCombo)] = []

@@ -6,7 +6,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var captureCoordinator: CaptureCoordinator?
     private var recordingCoordinator: RecordingCoordinator?
     private var statusItemController: StatusItemController?
-    private var hotKeyCenter: HotKeyCenter?
     private var globalHotKeys: GlobalHotKeys?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -21,26 +20,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ⇧⌘4 → area capture, ⇧⌘3 → fullscreen by default (see
         // features/preview-panel.md: the system's own ⇧⌘4 / ⇧⌘3 must be
         // disabled in System Settings). One center owns every binding — see
-        // HotKeyCenter for why a second would break the routing. The capture
-        // hot key is context-sensitive: it stops a recording and is ignored
-        // during the rest of a recording session.
+        // HotKeyCenter for why a second would break the routing.
         let center = HotKeyCenter()
-        center.register(.captureArea, combo: SettingsStore.shared.captureHotKey) {
-            switch CaptureHotKeyRoute.route(for: recording.phase) {
-            case .captureArea: coordinator.captureArea(trigger: .hotKey)
-            case .stopRecording: recording.stop()
-            case .ignore: break
-            }
-        }
-        center.register(.captureFullscreen, combo: SettingsStore.shared.fullscreenHotKey) {
-            coordinator.captureFullscreen(trigger: .hotKey)
-        }
-        hotKeyCenter = center
         // The session-only draw-mode / Magic Pen toggles register through it too.
         recording.hotKeys = center
-        // Settings rebinds all four live (`GlobalHotKeys`); a session's hot
-        // keys through the coordinator, which also re-labels Stop.
+        // `GlobalHotKeys` registers the capture keys (⇧⌘4 stops a recording
+        // and is ignored during the rest of a session) and rebinds all four
+        // live; a session's hot keys through the coordinator, which also
+        // re-labels Stop.
         let hotKeys = GlobalHotKeys(center: center)
+        hotKeys.installCaptureKeys(
+            phase: { recording.phase },
+            onCaptureArea: { coordinator.captureArea(trigger: .hotKey) },
+            onStopRecording: { recording.stop() },
+            onCaptureFullscreen: { coordinator.captureFullscreen(trigger: .hotKey) }
+        )
         hotKeys.rebindSession = { hotKey, combo in recording.rebindSessionHotKey(hotKey, to: combo) }
         hotKeys.onChange.append { hotKey, combo in
             if hotKey == .captureArea { recording.captureHotKeyDidChange(combo) }

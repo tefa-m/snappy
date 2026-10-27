@@ -4,6 +4,12 @@ import Foundation
 /// the app, a fake in tests.
 @MainActor
 protocol HotKeyRebinding: AnyObject {
+    /// Binds `combo` to `action`; false when the system refuses it (the
+    /// registration is kept, unbound, for a retry).
+    @discardableResult
+    func register(_ action: HotKeyAction, combo: HotKeyCombo, handler: @escaping @MainActor () -> Void) -> Bool
+    /// Removes a registration and its Carbon hot key; a no-op when absent.
+    func unregister(_ action: HotKeyAction)
     /// False when the system refuses `combo`; the action keeps its old one.
     /// The same combo again retries it when it isn't live.
     func replace(_ action: HotKeyAction, with combo: HotKeyCombo) -> Bool
@@ -63,6 +69,28 @@ final class GlobalHotKeys {
     }
 
     var bindings: HotKeyBindings { settings.hotKeyBindings }
+
+    /// Registers Capture Area and Capture Entire Screen for the app's
+    /// lifetime, with their stored combos. Capture Area is context-sensitive
+    /// (`CaptureHotKeyRoute`): `phase` is the active recording session's
+    /// phase (nil without one) — no session → `onCaptureArea`, recording →
+    /// `onStopRecording`, the rest of a session → ignored.
+    func installCaptureKeys(
+        phase: @escaping @MainActor () -> RecordingPhase?,
+        onCaptureArea: @escaping @MainActor () -> Void,
+        onStopRecording: @escaping @MainActor () -> Void,
+        onCaptureFullscreen: @escaping @MainActor () -> Void
+    ) {
+        guard let center else { return }
+        center.register(.captureArea, combo: bindings.captureArea) {
+            switch CaptureHotKeyRoute.route(for: phase()) {
+            case .captureArea: onCaptureArea()
+            case .stopRecording: onStopRecording()
+            case .ignore: break
+            }
+        }
+        center.register(.captureFullscreen, combo: bindings.captureFullscreen, handler: onCaptureFullscreen)
+    }
 
     /// The Capture Area combo — what stops a recording — while it is live;
     /// nil when the system refused it, so no Stop label promises it.
