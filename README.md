@@ -115,4 +115,4 @@ Releases (beta, stable, patch) are cut with `./scripts/release.sh`; see
 
 ## License
 
-[MIT](LICENSE) © 2026 Mostafa Abdelkhalek. Not affiliated with Apple.
+[MIT](LICENSE) © 2026 Mostafa Abdelkhalek.
