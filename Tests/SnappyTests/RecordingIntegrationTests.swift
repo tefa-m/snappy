@@ -55,8 +55,10 @@ struct RecordingIntegrationTests {
         }
     }
 
-    /// The session hot key seam: accepts or refuses like Carbon would.
-    @MainActor final class HotKeys: SessionHotKeyRegistering {
+    /// The `RecordingHotKeys` seam: registers or refuses like
+    /// `GlobalHotKeys` over Carbon would.
+    @MainActor final class HotKeys: RecordingHotKeys {
+        let settings: SettingsStore
         /// Actions whose combo another app owns.
         var refused: Set<HotKeyAction> = []
         /// Combos another app owns (for a Settings rebind).
@@ -65,24 +67,56 @@ struct RecordingIntegrationTests {
         var unbound: Set<HotKeyAction> = []
         var handlers: [HotKeyAction: @MainActor () -> Void] = [:]
         var combos: [HotKeyAction: HotKeyCombo] = [:]
+        private var sessionHandlers: [HotKeyAction: @MainActor () -> Void] = [:]
+        private var observers: [@MainActor () -> Void] = []
         private(set) var unregistered: [HotKeyAction] = []
         /// Draw-mode unregistrations (the count the T7 tests check).
         var unregistrations: Int { unregistrations(of: .toggleDrawMode) }
         func unregistrations(of action: HotKeyAction) -> Int { unregistered.filter { $0 == action }.count }
-        func register(_ action: HotKeyAction, combo: HotKeyCombo, handler: @escaping @MainActor () -> Void) -> Bool {
-            guard !refused.contains(action), !refusedCombos.contains(combo) else { return false }
-            handlers[action] = handler
-            combos[action] = combo
+
+        init(settings: SettingsStore) { self.settings = settings }
+
+        func beginSession(
+            onDrawMode: @escaping @MainActor () -> Void,
+            onMagicPen: @escaping @MainActor () -> Void
+        ) -> [SnappyHotKey] {
+            sessionHandlers = [.toggleDrawMode: onDrawMode, .toggleMagicPen: onMagicPen]
+            var refusedKeys: [SnappyHotKey] = []
+            let draw = settings.recordingDrawModeHotKey
+            if !register(.toggleDrawMode, combo: draw) { refusedKeys.append(.drawMode) }
+            let magic = settings.recordingMagicPenHotKey
+            if magic == draw || !register(.toggleMagicPen, combo: magic) { refusedKeys.append(.magicPen) }
+            return refusedKeys
+        }
+        func endSession() {
+            for action in [HotKeyAction.toggleDrawMode, .toggleMagicPen] {
+                unregistered.append(action)
+                handlers[action] = nil
+            }
+            sessionHandlers = [:]
+        }
+        func label(for hotKey: SnappyHotKey) -> String? {
+            guard !unbound.contains(hotKey.action) else { return nil }
+            guard hotKey.isSessionOnly else { return settings.hotKeyBindings[hotKey].displayString }
+            return handlers[hotKey.action] != nil ? combos[hotKey.action]?.displayString : nil
+        }
+        func observeLabels(_ observer: @escaping @MainActor () -> Void) { observers.append(observer) }
+
+        /// What `GlobalHotKeys` does when a label may have changed.
+        func labelsChanged() { for observer in observers { observer() } }
+        /// Settings rebinding a session hot key mid-session (`GlobalHotKeys.set`):
+        /// false (old combo kept, nothing announced) when the system refuses it.
+        func rebind(_ hotKey: SnappyHotKey, to combo: HotKeyCombo) -> Bool {
+            guard !refusedCombos.contains(combo), let handler = sessionHandlers[hotKey.action] else { return false }
+            handlers[hotKey.action] = handler
+            combos[hotKey.action] = combo
+            labelsChanged()
             return true
         }
-        func unregister(_ action: HotKeyAction) {
-            unregistered.append(action)
-            handlers[action] = nil
-        }
-        func isRegistered(_ action: HotKeyAction) -> Bool { handlers[action] != nil && !unbound.contains(action) }
-        func combo(for action: HotKeyAction) -> HotKeyCombo? { handlers[action] != nil ? combos[action] : nil }
-        func replace(_ action: HotKeyAction, with combo: HotKeyCombo) -> Bool {
-            guard handlers[action] != nil, !refusedCombos.contains(combo) else { return false }
+
+        private func register(_ action: HotKeyAction, combo: HotKeyCombo) -> Bool {
+            guard !refused.contains(action), !refusedCombos.contains(combo) else { return false }
+            handlers[action] = sessionHandlers[action]
             combos[action] = combo
             return true
         }
@@ -92,7 +126,7 @@ struct RecordingIntegrationTests {
         var windows: [Window] = []
         /// The newest recording window, while it is open.
         var openWindow: Window? { windows.last.flatMap { $0.isOpen ? $0 : nil } }
-        let hotKeys = HotKeys()
+        let hotKeys: HotKeys
         var notices: [BannerText] = []
         var failNextStart = false
         var pipelines: [Pipeline] = []
@@ -107,6 +141,7 @@ struct RecordingIntegrationTests {
             defaults = UserDefaults(suiteName: suiteName)!
             let settings = SettingsStore(defaults: defaults)
             settings.recordingCountdown = .off
+            hotKeys = HotKeys(settings: settings)
             tempStore = RecordingTempStore(directory: FileManager.default.temporaryDirectory
                 .appending(path: "SnappyIntegrationTests-\(UUID().uuidString)", directoryHint: .isDirectory))
             let box = Box()
@@ -758,10 +793,9 @@ struct RecordingIntegrationTests {
         let h = Harness()
         defer { h.cleanUp() }
         let x = HotKeyCombo(keyCode: UInt32(kVK_ANSI_X), carbonModifiers: UInt32(controlKey | optionKey))
-        #expect(h.coordinator.rebindSessionHotKey(.magicPen, to: x) == nil, "no session: the next one reads it")
         #expect(h.coordinator.beginSession(target: try areaTarget(), userApp: nil))
         h.coordinator.handle(.command(.record))
-        #expect(h.coordinator.rebindSessionHotKey(.magicPen, to: x) == true)
+        #expect(h.hotKeys.rebind(.magicPen, to: x))
         #expect(h.hotKeys.combos[.toggleMagicPen] == x)
         #expect(try toolbarButton(.magicPen).toolTip == "Draw fading ink (⌃⌥X)")
         let toggle = try #require(h.hotKeys.handlers[.toggleMagicPen])
@@ -770,10 +804,9 @@ struct RecordingIntegrationTests {
 
         let y = HotKeyCombo(keyCode: UInt32(kVK_ANSI_Y), carbonModifiers: UInt32(controlKey | optionKey))
         h.hotKeys.refusedCombos = [y]
-        #expect(h.coordinator.rebindSessionHotKey(.magicPen, to: y) == false)
+        #expect(!h.hotKeys.rebind(.magicPen, to: y))
         #expect(h.hotKeys.combos[.toggleMagicPen] == x, "the old combo stays")
         #expect(try toolbarButton(.magicPen).toolTip == "Draw fading ink (⌃⌥X)")
-        #expect(h.coordinator.rebindSessionHotKey(.captureArea, to: y) == nil, "not a session hot key")
     }
 
     @Test("A draw-mode hot key refused at session start is registered by a Settings rebind, and advertised")
@@ -786,7 +819,7 @@ struct RecordingIntegrationTests {
         #expect(try drawModeButton().toolTip == "Switch between drawing and using your app")
         h.hotKeys.refused = []
         let x = HotKeyCombo(keyCode: UInt32(kVK_ANSI_X), carbonModifiers: UInt32(controlKey))
-        #expect(h.coordinator.rebindSessionHotKey(.drawMode, to: x) == true)
+        #expect(h.hotKeys.rebind(.drawMode, to: x))
         #expect(h.hotKeys.combos[.toggleDrawMode] == x)
         #expect(try drawModeButton().toolTip == "Switch between drawing and using your app (⌃X)")
         let toggle = try #require(h.hotKeys.handlers[.toggleDrawMode])
@@ -803,7 +836,8 @@ struct RecordingIntegrationTests {
         #expect(h.coordinator.beginSession(target: try areaTarget(), userApp: nil))
         h.coordinator.handle(.command(.record))
         #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it (⌥⌘5)")
-        h.coordinator.captureHotKeyDidChange(.defaultCapture)
+        SettingsStore(defaults: h.defaults).captureHotKey = .defaultCapture
+        h.hotKeys.labelsChanged()
         #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it (⇧⌘4)")
     }
 
@@ -811,13 +845,12 @@ struct RecordingIntegrationTests {
     func stopTooltipOmitsCaptureHotKeyRefusedAtLaunch() async throws {
         let h = Harness()
         defer { h.cleanUp() }
-        #expect(h.hotKeys.register(.captureArea, combo: .defaultCapture) {})
         h.hotKeys.unbound = [.captureArea] // another app owned ⇧⌘4 at launch
         #expect(h.coordinator.beginSession(target: try areaTarget(), userApp: nil))
         h.coordinator.handle(.command(.record))
         #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it")
-        h.hotKeys.unbound = [] // a retry bound it (`onStatusChange`)
-        h.coordinator.refreshHotKeyLabels()
+        h.hotKeys.unbound = [] // a retry bound it
+        h.hotKeys.labelsChanged()
         #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it (⇧⌘4)")
     }
 
@@ -825,14 +858,13 @@ struct RecordingIntegrationTests {
     func stopTooltipOmitsCaptureHotKeyRefusedOnResume() async throws {
         let h = Harness()
         defer { h.cleanUp() }
-        #expect(h.hotKeys.register(.captureArea, combo: .defaultCapture) {})
         #expect(h.coordinator.beginSession(target: try areaTarget(), userApp: nil))
         h.coordinator.handle(.command(.record))
         #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it (⇧⌘4)")
         h.hotKeys.unbound = [.captureArea] // taken while a Settings recorder paused it
-        h.coordinator.refreshHotKeyLabels()
+        h.hotKeys.labelsChanged()
         #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it")
-        h.coordinator.captureHotKeyDidChange(.defaultCapture) // e.g. a layout switch re-announces it
+        h.hotKeys.labelsChanged() // e.g. a layout switch re-announces it
         #expect(try toolbarButton(.stop).toolTip == "Stop recording and preview it")
     }
 

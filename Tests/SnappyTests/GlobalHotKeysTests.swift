@@ -204,26 +204,61 @@ struct GlobalHotKeysTests {
         #expect(settings.recordingMagicPenHotKey == .defaultMagicPen)
     }
 
-    @Test func duringASessionTheCoordinatorRebindsASessionHotKey() {
-        /// The coordinator's answer, and what it was asked.
-        final class Session {
-            var accepts = true
-            var asked: [HotKeyCombo] = []
-        }
-        let session = Session()
-        hotKeys.rebindSession = { hotKey, combo in
-            #expect(hotKey == .magicPen)
-            session.asked.append(combo)
-            return session.accepts
-        }
+    @Test func duringASessionASessionHotKeyIsReboundLive() {
+        hotKeys.beginSession(onDrawMode: {}, onMagicPen: {})
+        var labels = 0
+        hotKeys.observeLabels { labels += 1 }
         #expect(hotKeys.set(.magicPen, to: Self.ctrlOptX) == nil)
         #expect(settings.recordingMagicPenHotKey == Self.ctrlOptX)
-        session.accepts = false
+        #expect(hotKeys.label(for: .magicPen) == "⌃⌥X")
+        #expect(labels == 1, "the toolbar re-reads its labels")
         let y = HotKeyCombo(keyCode: UInt32(kVK_ANSI_Y), carbonModifiers: UInt32(controlKey))
+        center.taken = [y.key]
         #expect(hotKeys.set(.magicPen, to: y) == .unavailable(y))
         #expect(settings.recordingMagicPenHotKey == Self.ctrlOptX, "the old one stays")
-        #expect(session.asked == [Self.ctrlOptX, y])
+        #expect(center.combos[.toggleMagicPen] == Self.ctrlOptX)
+        #expect(center.replaced.map(\.1) == [Self.ctrlOptX])
         #expect(center.probed.isEmpty, "the live rebind is the check")
+        #expect(labels == 1)
+    }
+
+    @Test func aSessionRegistersBothSessionKeysAndReportsTheRefusedOnes() throws {
+        var presses: [String] = []
+        center.taken = [HotKeyCombo.defaultMagicPen.key]
+        let refused = hotKeys.beginSession(onDrawMode: { presses.append("draw") }, onMagicPen: { presses.append("magic") })
+        #expect(refused == [.magicPen])
+        #expect(center.combos[.toggleDrawMode] == .defaultDrawMode)
+        #expect(hotKeys.label(for: .drawMode) == "⌃⌥D")
+        #expect(hotKeys.label(for: .magicPen) == nil, "refused: not advertised")
+        #expect(!hotKeys.isLive(.magicPen))
+        let draw = try #require(center.handlers[.toggleDrawMode])
+        draw()
+        #expect(presses == ["draw"])
+
+        hotKeys.endSession()
+        #expect(center.unregistered == [.toggleDrawMode, .toggleMagicPen])
+        #expect(center.combos[.toggleDrawMode] == nil)
+        #expect(hotKeys.isLive(.magicPen), "outside a session a session key reads as live")
+    }
+
+    @Test func aMagicPenComboEqualToTheDrawModeOneIsNotRegisteredTwice() {
+        settings.recordingDrawModeHotKey = .defaultMagicPen
+        #expect(hotKeys.beginSession(onDrawMode: {}, onMagicPen: {}) == [.magicPen])
+        #expect(center.combos[.toggleMagicPen] == nil)
+        #expect(hotKeys.label(for: .magicPen) == nil)
+        #expect(hotKeys.label(for: .drawMode) == "⌃⌥P")
+    }
+
+    @Test func aSessionKeyNotRegisteredAtSessionStartIsRegisteredByARebind() throws {
+        settings.recordingDrawModeHotKey = .defaultMagicPen
+        var presses = 0
+        hotKeys.beginSession(onDrawMode: {}, onMagicPen: { presses += 1 })
+        #expect(hotKeys.set(.magicPen, to: Self.ctrlOptX) == nil)
+        #expect(center.combos[.toggleMagicPen] == Self.ctrlOptX)
+        #expect(hotKeys.label(for: .magicPen) == "⌃⌥X")
+        let magic = try #require(center.handlers[.toggleMagicPen])
+        magic()
+        #expect(presses == 1, "the session's handler")
     }
 
     @Test func resetRestoresTheDefaultUnlessAnotherHotKeyHoldsIt() {

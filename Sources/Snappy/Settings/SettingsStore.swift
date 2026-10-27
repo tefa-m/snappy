@@ -259,7 +259,7 @@ final class SettingsStore {
 
     /// Session-only draw/interact hot key. Default ⌃⌥D. Read at each session
     /// start; a Settings change during a session is rebound live
-    /// (`RecordingCoordinator.rebindSessionHotKey`).
+    /// (`GlobalHotKeys.set`).
     var recordingDrawModeHotKey: HotKeyCombo {
         get {
             if let dict = defaults.dictionary(forKey: Key.recordingDrawModeHotKey) as? [String: Int],
