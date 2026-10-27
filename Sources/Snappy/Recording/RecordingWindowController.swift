@@ -83,6 +83,10 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
     private let focus: RecordingWindowFocus
     /// A focus request still waiting for activation (see `takeFocus`).
     private var pendingFocus: PendingFocus?
+    /// Puts Copy's file on the clipboard; false when the write was refused.
+    private let writeToPasteboard: @MainActor (URL) -> Bool
+    /// Test hook: receives every alert instead of a sheet or modal alert.
+    var onAlertForTesting: ((AlertText) -> Void)?
 
     /// How long a declined or late activation may still make this window key.
     static let focusGrace: Duration = .seconds(1)
@@ -97,7 +101,8 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
         take: URL, anchorRect: CGRect, onRetake: (@MainActor () -> Void)?, context: RecordingWindowContext,
         settings: SettingsStore = .shared,
         focus: RecordingWindowFocus = RecordingWindowFocus(),
-        loadVideoInfo: @escaping @Sendable (URL) async -> RecordingVideoInfo = RecordingWindowController.videoInfo(of:)
+        loadVideoInfo: @escaping @Sendable (URL) async -> RecordingVideoInfo = RecordingWindowController.videoInfo(of:),
+        writeToPasteboard: @escaping @MainActor (URL) -> Bool = { RecordingExport.copyToPasteboard($0) }
     ) {
         self.take = take
         self.anchorRect = anchorRect
@@ -107,6 +112,7 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
         self.settings = settings
         self.focus = focus
         self.loadVideoInfo = loadVideoInfo
+        self.writeToPasteboard = writeToPasteboard
         exportScale = settings.recordingExportScale
         canvas = RecordingCanvasView(player: player)
         // Shared toolbar identifiers sync their items between windows, so the
@@ -590,7 +596,8 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
     /// window closes — the saved file when this take was saved, else a
     /// `Recording … .mp4` clone, which outlives the take. If the clone can't
     /// be made, the window stays open (its take may be deleted on close, so
-    /// the take itself is never put on the pasteboard).
+    /// the take itself is never put on the pasteboard); so it does when the
+    /// pasteboard refuses the file — closing then could lose an unsaved take.
     private func copyTake() {
         guard encode == nil else {
             NSSound.beep() // one export at a time
@@ -613,7 +620,10 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
             showAlert(UserFacingText.recordingCopyFailed(error))
             return
         }
-        RecordingExport.copyToPasteboard(file)
+        guard writeToPasteboard(file) else {
+            showAlert(UserFacingText.recordingClipboardFailed)
+            return
+        }
         close()
     }
 
@@ -751,6 +761,10 @@ final class RecordingWindowController: NSObject, RecordingWindowHosting {
     /// A sheet on this window while it is open, so other windows stay usable
     /// (as in the editor); app-modal once it has closed.
     private func showAlert(_ text: AlertText) {
+        if let onAlertForTesting {
+            onAlertForTesting(text)
+            return
+        }
         guard isOpen, window.isVisible else {
             Self.runAlert(text)
             return

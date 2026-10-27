@@ -342,15 +342,161 @@ struct RecordingTempStoreTests {
         #expect(url.deletingLastPathComponent().standardizedFileURL == store.directory.standardizedFileURL)
         #expect(FileManager.default.fileExists(atPath: store.directory.path(percentEncoded: false)))
         #expect(!FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
+        #expect(RecordingTempStore.isInProgress(url))
         #expect(store.lastTake == nil) // nothing written yet
     }
 
-    @Test func writtenTakeIsTheLastTake() throws {
+    @Test func finalizedTakeIsTheLastTake() throws {
         let store = try makeStore()
         defer { cleanUp(store) }
         let url = try store.prepareNewTake()
-        try Data("video".utf8).write(to: url)
-        #expect(store.lastTake?.standardizedFileURL == url.standardizedFileURL)
+        try MP4Fixture.playable.write(to: url)
+        let take = try store.finalizeTake(url)
+        #expect(take.pathExtension == "mp4")
+        #expect(!RecordingTempStore.isInProgress(take))
+        #expect(!FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
+        #expect(store.lastTake?.standardizedFileURL == take.standardizedFileURL)
+        #expect(try store.finalizeTake(take) == take) // already finalized: unchanged
+    }
+
+    /// F2: a take left behind mid-recording (force-quit, crash, logout) has no
+    /// moov atom — it never becomes the last take, even when it is the newest.
+    @Test func anUnfinalizedTakeIsNeverTheLastTake() throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        let good = try store.finalizeTake(writtenTake(store, minutesAgo: 5))
+        let crashed = try writtenTake(store, MP4Fixture.unfinished, minutesAgo: 0)
+        #expect(store.lastTake?.standardizedFileURL == good.standardizedFileURL)
+        store.discard(good)
+        #expect(store.lastTake == nil, "only the unfinalized one is left")
+        #expect(FileManager.default.fileExists(atPath: crashed.path(percentEncoded: false)))
+    }
+
+    @Test func pruneDeletesUnfinalizedLeftovers() throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        let good = try store.finalizeTake(writtenTake(store, minutesAgo: 5))
+        let crashed = try writtenTake(store, MP4Fixture.unfinished, minutesAgo: 0)
+        store.prune(keeping: [good])
+        #expect(!FileManager.default.fileExists(atPath: crashed.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: good.path(percentEncoded: false)))
+    }
+
+    /// B1: builds before the in-progress name wrote straight to `Take-….mp4`.
+    /// A newer such file a crash cut off (no moov atom) never displaces an
+    /// older playable take — legacy or not — and is pruned like any leftover.
+    @Test func aNewerUnfinishedLegacyTakeNeverDisplacesAPlayableOne() throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        let good = try legacyTake(store, MP4Fixture.playable, minutesAgo: 5)
+        let crashed = try legacyTake(store, MP4Fixture.unfinished, minutesAgo: 0)
+        #expect(!RecordingTempStore.isInProgress(crashed))
+        #expect(store.lastTake?.standardizedFileURL == good.standardizedFileURL, "the playable legacy take wins")
+        store.discard(good)
+        #expect(store.lastTake == nil, "only the unfinished one is left")
+        let newer = try store.finalizeTake(writtenTake(store, minutesAgo: 10))
+        #expect(store.lastTake?.standardizedFileURL == newer.standardizedFileURL)
+        store.prune(keeping: [newer])
+        #expect(!FileManager.default.fileExists(atPath: crashed.path(percentEncoded: false)))
+    }
+
+    /// B1: a newer legacy take cut off inside its movie header (the `moov`
+    /// header is there, its payload isn't) never displaces an older playable one.
+    @Test func aNewerLegacyTakeWithATruncatedMovieHeaderNeverDisplacesAPlayableOne() throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        let good = try legacyTake(store, MP4Fixture.playableWithMovie, minutesAgo: 5)
+        let partial = try legacyTake(store, MP4Fixture.truncatedAfterMovieHeader, minutesAgo: 0)
+        #expect(!RecordingTempStore.isInProgress(partial))
+        #expect(store.lastTake?.standardizedFileURL == good.standardizedFileURL, "the playable legacy take wins")
+        store.discard(good)
+        #expect(store.lastTake == nil, "only the truncated one is left")
+    }
+
+    @Test(arguments: MP4Fixture.brokenMovies + [MP4Fixture.truncatedAfterMovieHeader])
+    func aMalformedOrTruncatedMoovIsNotPlayable(contents: Data) throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        let url = try legacyTake(store, contents, minutesAgo: 0)
+        #expect(!RecordingTempStore.isPlayable(url))
+    }
+
+    @Test(arguments: [
+        (MP4Fixture.playable, true),
+        (MP4Fixture.playableWithMovie, true),
+        (MP4Fixture.playableAfterLargeBox, true),
+        (MP4Fixture.box("moov"), true),
+        (MP4Fixture.header(size: 0, "moov") + Data(count: 16), true), // runs to the end of the file
+        (MP4Fixture.unfinished, false),
+        (MP4Fixture.truncated, false),
+        (MP4Fixture.box("ftyp"), false),
+        (Data("mp4".utf8), false),
+        (Data(), false),
+        (Data(count: 64), false), // size 0 boxes: no moov
+    ])
+    func playableMeansATopLevelMoovBox(contents: Data, playable: Bool) throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        let url = try legacyTake(store, contents, minutesAgo: 0)
+        #expect(RecordingTempStore.isPlayable(url) == playable)
+    }
+
+    @Test func aMissingFileIsNotPlayable() throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        #expect(!RecordingTempStore.isPlayable(store.directory.appending(path: "Take-0-gone.mp4")))
+    }
+
+    /// B2: `moveItem` never overwrites — a taken finalized name gets another.
+    @Test func finalizingOntoATakenNamePicksAnotherOne() throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        let url = try writtenTake(store, minutesAgo: 0)
+        let taken = url.deletingPathExtension().deletingPathExtension()
+            .appendingPathExtension(RecordingTempStore.takeExtension)
+        try Data("already here".utf8).write(to: taken)
+        let take = try store.finalizeTake(url)
+        #expect(take.standardizedFileURL != taken.standardizedFileURL)
+        #expect(!RecordingTempStore.isInProgress(take))
+        #expect(try Data(contentsOf: take) == MP4Fixture.playable)
+        #expect(try Data(contentsOf: taken) == Data("already here".utf8))
+        #expect(!FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
+    }
+
+    @Test func aFailedFinalizeThrowsAndKeepsTheInProgressFile() throws {
+        let store = try makeStore()
+        defer { cleanUp(store) }
+        let url = try writtenTake(store, minutesAgo: 0)
+        let directory = store.directory.path(percentEncoded: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory) }
+        #expect(throws: (any Error).self) { try store.finalizeTake(url) }
+        #expect(FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
+        #expect(store.lastTake == nil)
+    }
+
+    /// A take written but not finalized, its modification date `minutesAgo`.
+    private func writtenTake(
+        _ store: RecordingTempStore, _ contents: Data = MP4Fixture.playable, minutesAgo: Double
+    ) throws -> URL {
+        let url = try store.prepareNewTake()
+        try contents.write(to: url)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -minutesAgo * 60)], ofItemAtPath: url.path(percentEncoded: false)
+        )
+        return url
+    }
+
+    /// A take under the final name, as builds before the in-progress name
+    /// wrote it, its modification date `minutesAgo`.
+    private func legacyTake(_ store: RecordingTempStore, _ contents: Data, minutesAgo: Double) throws -> URL {
+        let url = try store.prepareNewTake().deletingPathExtension().deletingPathExtension()
+            .appendingPathExtension(RecordingTempStore.takeExtension)
+        try contents.write(to: url)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -minutesAgo * 60)], ofItemAtPath: url.path(percentEncoded: false)
+        )
+        return url
     }
 
     /// v2 (Q30): open windows and the latest take keep theirs through the
@@ -358,8 +504,7 @@ struct RecordingTempStoreTests {
     @Test func preparingANewTakeDeletesNothing() throws {
         let store = try makeStore()
         defer { cleanUp(store) }
-        let first = try store.prepareNewTake()
-        try Data("one".utf8).write(to: first)
+        let first = try store.finalizeTake(writtenTake(store, minutesAgo: 0))
         let second = try store.prepareNewTake()
         #expect(second != first)
         #expect(FileManager.default.fileExists(atPath: first.path(percentEncoded: false)))
@@ -402,8 +547,8 @@ struct RecordingTempStoreTests {
         _ = try store.prepareNewTake()
         let older = store.directory.appending(path: "a.mp4")
         let newer = store.directory.appending(path: "b.mp4")
-        try Data("a".utf8).write(to: older)
-        try Data("b".utf8).write(to: newer)
+        try MP4Fixture.playable.write(to: older)
+        try MP4Fixture.playable.write(to: newer)
         try FileManager.default.setAttributes(
             [.modificationDate: Date(timeIntervalSinceNow: -60)], ofItemAtPath: newer.path(percentEncoded: false)
         )

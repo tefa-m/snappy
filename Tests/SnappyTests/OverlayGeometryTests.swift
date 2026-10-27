@@ -109,6 +109,13 @@ import Testing
         #expect(OverlayKeys.isCancel(keyCode: 12, characters: "q", flags: [.capsLock]))
     }
 
+    @Test func pinsAndThePreviewPanelCloseOnTheSameKeys() {
+        // Pins and the preview panel close via `OverlayKeys.isCancel`; the
+        // pin's advertised close key must stay the Q it matches.
+        #expect(PinAction.close.shortcutKey == "q")
+        #expect(PinAction.close.toolTip.hasSuffix("(Q)"))
+    }
+
     // MARK: - Tracking areas
 
     @Test func noTrackingAreaCombinesActiveAlwaysWithCursorUpdate() {
@@ -126,6 +133,8 @@ import Testing
     @Test func modifiedQAndOtherKeysDoNotCancel() {
         #expect(!OverlayKeys.isCancel(keyCode: 12, characters: "q", flags: [.command]))
         #expect(!OverlayKeys.isCancel(keyCode: 12, characters: "q", flags: [.option]))
+        #expect(!OverlayKeys.isCancel(keyCode: 12, characters: "q", flags: [.control]))
+        #expect(!OverlayKeys.isCancel(keyCode: 12, characters: "Q", flags: [.command, .shift]))
         #expect(!OverlayKeys.isCancel(keyCode: 0, characters: "a", flags: []))
     }
 

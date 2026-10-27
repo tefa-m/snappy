@@ -77,7 +77,8 @@ Sources/Snappy/
     OverlayGeometry.swift          PURE overlay chrome layout: two-tone edge rects,
                                    size readout, size/title chip frames + clamp — tested
     OverlayChrome.swift            AppKit drawing of that chrome, shared by both overlays
-    OverlayKeys.swift              PURE cancel-key test (Esc or bare Q) — tested
+    OverlayKeys.swift              PURE cancel-key test (Esc or bare Q) — tested;
+                                   also the preview panel's and pins' close keys
     OverlayTracking.swift          PURE tracking-area option sets (see invariant 3) — tested
   HotKey/
     HotKeyCombo.swift            PURE combo model (keyCode + Carbon modifiers) with
@@ -126,7 +127,8 @@ Sources/Snappy/
                                  Record — R hands the area to recording Setup)
   Pin/
     PinGeometry.swift            PURE zoom/corner-resize math, resize-corner
-                                 hit test, toolbar fit — unit-tested
+                                 hit test, mouse-down action (corner beats
+                                 double-click close), toolbar fit — unit-tested
     PinAction.swift              PURE toolbar actions (title/symbol/key/tooltip)
                                  + hover alpha (Reduce Transparency) — tested
     PinWindowController.swift    Always-on-top pinned screenshot windows +
@@ -213,7 +215,10 @@ Sources/Snappy/
                                  HotKeyBindings (all four combos; conflict,
                                  resetRejection), menuKeyEquivalent,
                                  SettingsPaneFit (clamp + scroll
-                                 when the pane is taller than the screen)
+                                 when the pane is taller than the screen;
+                                 placement clamps both axes into the
+                                 visible frame of the screen the window
+                                 overlaps most, else the main one)
     SettingsWindowController.swift  Single-pane "Snappy Settings": pop-up path
                                  control, Capture area / Capture screen
                                  shortcut fields + Open Keyboard Settings,
@@ -276,7 +281,11 @@ Sources/Snappy/Recording/        Screen recording with live annotations
     RecordingSettings.swift      Every Settings → Recording option + defaults
                                  (SettingsStore keys/accessors) — tested
     RecordingTempStore.swift     ~/Library/Caches/com.tefa.snappy/Recordings/
-                                 (prepareNewTake deletes nothing; prune/discard)
+                                 (prepareNewTake deletes nothing and names the
+                                 take `….inprogress.mp4`; finalizeTake renames
+                                 it once written (a taken name → another);
+                                 lastTake = newest finalized with a top-level
+                                 `moov` (isPlayable); prune/discard)
                                  + PURE RecordingTakeLedger (v2 take lifetime:
                                  open windows + the latest are kept) — tested
     RecordingContracts.swift     Ink vocabulary (InkTool/ColorPreset/Width/Style/
@@ -480,7 +489,7 @@ menu item → captureWindow   (unchanged: activates synchronously, then picks)
              under the pointer; same key / the lit button back, other switches, click / Return confirms;
              first entry without Accessibility → the one-time prompt) · R → countdown (1 s ticks)
              · Esc / Cancel → cancelled
-  RECORDING  RecordingTempStore.prepareNewTake (a new URL; deletes nothing)
+  RECORDING  RecordingTempStore.prepareNewTake (a new `….inprogress.mp4` URL; deletes nothing)
              → pipeline.start(target, settings, ink.frameDecorator, url)
              overlay ordered out → activateUserApp (yield + activate): keys belong to the user's app
              ⌃⌥D / toolbar ↔ draw mode (ink panel key, Snappy NOT activated)
@@ -493,7 +502,8 @@ menu item → captureWindow   (unchanged: activates synchronously, then picks)
              (inside the stop's interaction) → pipeline.stop() → finished(url) → every piece closed, ⌃⌥D unregistered,
              pipeline.endTracking() → AX tree switches restored (posted to the AX executor — the main thread
              never waits for it)
-             → ledger.finished(url) + prune (unkept takes deleted) → a new RecordingWindowController,
+             → finalizeTake (renamed `Take-….mp4`) → ledger.finished(take) + prune (unkept takes deleted) → a new RecordingWindowController
+             (rename failed → the window opens on the in-progress file, but no ledger.finished and no prune),
              shown synchronously (frontmost, focus; the take's size/duration update it later, never focus)
   WINDOW     one per take, persistent, several coexist · Retake → (closes it) beginSession(same
              target, setup-ink snapshot, ink style), then the target is looked up again (Q41: the part's
@@ -526,8 +536,14 @@ for a fullscreen capture or the post-pick window screenshot to deliver, so no
 screenshot panel can land over recording Setup. Those two are tracked **one
 token per request** (`PendingCaptures`, tested), never a per-kind Boolean: the
 screenshot gates let a second ⇧⌘3 or window capture start while the first is
-pending, and a Boolean would be cleared by the first completion. A late capture result while a
-recording is busy is dropped (`dropsCaptureResult`). Inside the recording
+pending, and a Boolean would be cleared by the first completion. **One rule for
+late results** (`CaptureActivity.dropsCaptureResult(superseded:)`): an area
+selection or window pick supersedes every fullscreen / post-pick window capture
+still pending when it starts (`PendingCaptures.supersedeAll`, like it closes a
+panel already up) — that result (panel or error) is dropped whether it lands
+over the overlay or after it closed; and no result presents while an
+interactive session or a recording is busy. Superseded requests still count
+as pending for the recording gate. Inside the recording
 coordinator every callback and async result is scoped to its session id, and a
 cancelled/failed session keeps the coordinator busy until its pipeline's single
 `stop()` has returned (the "draining" state) — see `RecordingCoordinator`.
@@ -783,7 +799,8 @@ is still a transparent `NSWindow`.
   phrase instead of the button name (`PreviewAction.toolTip(saveFolderName:)`,
   e.g. "Save PNG to Desktop (S)"). Because the panel is key, the single letters E/C/S/O/P
   trigger Edit/Copy/Save/OCR/Pin from the keyboard (handled in the panel's
-  `keyDown`, next to Esc). **Q dismisses like Esc** — panel and pin windows
+  `keyDown`, next to Esc — the panel's only key path; no key monitor, so Esc
+  in another key Snappy window is never taken by the panel). **Q dismisses like Esc** — panel and pin windows
   both (shortcuts-first rule — see the shortcuts feature doc via
   `docs/FEATURE_MAP.md`).
 - Click-away dismissal needs **two** monitors: a global mouse-down monitor
@@ -1290,12 +1307,26 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
   *counted* per take, because a window still closing (its `onClose` lands a
   turn later) and a reopened one can overlap. The ledger's `latest` is seeded
   from the newest take on disk at launch. The take being written is never in
-  the ledger, so a window closing mid-recording can't touch it. Save **stages
+  the ledger, so a window closing mid-recording can't touch it. **Only
+  finalized takes are reopenable:** a take is written under an in-progress
+  name and `finalizeTake` renames it after the run's `stop()` returned
+  (`RecordingCoordinator.finalized`), so a file a force-quit/crash left
+  mid-recording (no complete moov atom) is never the launch-time `latest` and is
+  deleted by the next `prune`. Builds before the in-progress name wrote
+  `Take-….mp4` directly, so `lastTake` also requires a top-level `moov` box
+  (`RecordingTempStore.isPlayable`, box headers only, bounded) — a legacy
+  crash leftover is skipped too and an older playable take wins. A taken
+  finalized name is retried with another (never overwritten); if the rename
+  still fails, the take opens in its window for this run only — it never
+  becomes `latest` and nothing is pruned, so the previous latest stays
+  reopenable, and closing that window deletes it. Save **stages
   a hard link synchronously** before it yields, then copies (never moves) into
   the Save folder, so a take released meanwhile still saves; a missing take is
   refused, never fabricated. Copy pastes the saved file, else a `Recording …
-  .mp4` clone in the temp dir (it outlives the take); if the clone fails the
-  window stays open — the take itself is never put on the pasteboard. **Where
+  .mp4` clone in the temp dir (it outlives the take); if the clone fails, or
+  the pasteboard refuses the file (`copyToPasteboard` returns false), the
+  window stays open with an alert — the take itself is never put on the
+  pasteboard. **Where
   a take was saved belongs to the take, not its window**
   (`RecordingSavedFiles`, owned by the coordinator, shared with every window
   through `RecordingWindowContext`, trimmed to `ledger.kept`): a reopened
@@ -1439,8 +1470,13 @@ reasoning lives in `docs/recording-reviews/t*.dev.md`.
     (`WindowPartQueryTicket`, an atomic shared by both sides). **Latest-wins
     covers picks only**: an older answer that switched a tree on still
     schedules the post-switch recheck (the newer query reuses the empty
-    chain and can't switch again). A click or Return confirms the pick on
-    screen.
+    chain and can't switch again). **A click or Return confirms the pick
+    at its own point**, not the one on screen: `WindowPartModel.whenSettled`
+    holds the confirm until the answer for that point is applied (at once
+    with no tree / over no window / already answered); while it waits the
+    overlay ignores moves (a second click or Return supersedes, leaving or
+    switching snap mode drops it), and after `settleTimeout` (1 s) the whole
+    window at that point is confirmed.
   - **Still bounded, for the executor's throughput** (every app's queries
     share it): `WindowPartLiveAX` sets 0.25 s on each element right before
     messaging it (hit element, every parent, retained parts, a restore's

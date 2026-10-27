@@ -379,11 +379,48 @@ struct SettingsFormattingTests {
         // Grown downwards past the Dock → slides up.
         #expect(SettingsPaneFit.placed(CGRect(x: 100, y: 20, width: 460, height: 700), in: visible)
             == CGRect(x: 100, y: 70, width: 460, height: 700))
-        // Top above the visible frame → slides down; x untouched.
-        #expect(SettingsPaneFit.placed(CGRect(x: -40, y: 500, width: 460, height: 400), in: visible)
-            == CGRect(x: -40, y: 370, width: 460, height: 400))
+        // Top above the visible frame → slides down.
+        #expect(SettingsPaneFit.placed(CGRect(x: 100, y: 500, width: 460, height: 400), in: visible)
+            == CGRect(x: 100, y: 370, width: 460, height: 400))
         // Taller than the visible frame → the top (title bar) wins.
         #expect(SettingsPaneFit.placed(CGRect(x: 0, y: 0, width: 460, height: 900), in: visible).maxY == visible.maxY)
+    }
+
+    @Test("Placement slides the window into the visible frame horizontally, left edge first")
+    func panePlacementHorizontal() {
+        let visible = CGRect(x: 0, y: 70, width: 1280, height: 700)
+        // Off the left edge → slides right.
+        #expect(SettingsPaneFit.placed(CGRect(x: -40, y: 200, width: 460, height: 400), in: visible)
+            == CGRect(x: 0, y: 200, width: 460, height: 400))
+        // Off the right edge (e.g. after a resolution drop) → slides left.
+        #expect(SettingsPaneFit.placed(CGRect(x: 1100, y: 200, width: 460, height: 400), in: visible)
+            == CGRect(x: 820, y: 200, width: 460, height: 400))
+        // Wider than the visible frame → the left edge wins.
+        #expect(SettingsPaneFit.placed(CGRect(x: 300, y: 200, width: 1500, height: 400), in: visible).minX == 0)
+        // Both axes at once, on a secondary display left of the main one.
+        let left = CGRect(x: -1920, y: 0, width: 1920, height: 1050)
+        #expect(SettingsPaneFit.placed(CGRect(x: -2000, y: 900, width: 460, height: 400), in: left)
+            == CGRect(x: -1920, y: 650, width: 460, height: 400))
+    }
+
+    @Test("The visible frame comes from the screen the window overlaps most, else the fallback")
+    func paneScreenChoice() {
+        let main = (frame: CGRect(x: 0, y: 0, width: 1440, height: 900), visible: CGRect(x: 0, y: 70, width: 1440, height: 805))
+        let side = (frame: CGRect(x: 1440, y: 0, width: 1920, height: 1080), visible: CGRect(x: 1440, y: 0, width: 1920, height: 1055))
+        let fallback = CGRect(x: 0, y: 1, width: 2, height: 3)
+        // Mostly on the side display.
+        #expect(SettingsPaneFit.visibleFrame(
+            for: CGRect(x: 1300, y: 200, width: 460, height: 400), screens: [main, side], fallback: fallback
+        ) == side.visible)
+        // Mostly on the main display.
+        #expect(SettingsPaneFit.visibleFrame(
+            for: CGRect(x: 1100, y: 200, width: 460, height: 400), screens: [main, side], fallback: fallback
+        ) == main.visible)
+        // On no display (its display was unplugged) → fallback.
+        #expect(SettingsPaneFit.visibleFrame(
+            for: CGRect(x: 5000, y: 200, width: 460, height: 400), screens: [main, side], fallback: fallback
+        ) == fallback)
+        #expect(SettingsPaneFit.visibleFrame(for: .zero, screens: [], fallback: fallback) == fallback)
     }
 
     @Test("Refit keeps the top edge, then places — the closed → Dock change → reopen case lands inside")
