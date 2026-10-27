@@ -21,6 +21,25 @@ struct GlobalHotKeysTests {
         private(set) var retries = 0
         /// Every call, in order: "suspend", "resume", "replace", "probe".
         private(set) var log: [String] = []
+        /// Registered presses, by action.
+        var handlers: [HotKeyAction: @MainActor () -> Void] = [:]
+        private(set) var unregistered: [HotKeyAction] = []
+        func register(_ action: HotKeyAction, combo: HotKeyCombo, handler: @escaping @MainActor () -> Void) -> Bool {
+            combos[action] = combo
+            handlers[action] = handler
+            guard !taken.contains(combo.key) else {
+                unbound.insert(action)
+                return false
+            }
+            unbound.remove(action)
+            return true
+        }
+        func unregister(_ action: HotKeyAction) {
+            unregistered.append(action)
+            combos[action] = nil
+            handlers[action] = nil
+            unbound.remove(action)
+        }
         func replace(_ action: HotKeyAction, with combo: HotKeyCombo) -> Bool {
             log.append("replace")
             guard !taken.contains(combo.key) else { return false }
@@ -61,22 +80,47 @@ struct GlobalHotKeysTests {
     private static let ctrlOptX = HotKeyCombo(keyCode: UInt32(kVK_ANSI_X), carbonModifiers: UInt32(controlKey | optionKey))
     private static let cmdOpt5 = HotKeyCombo(keyCode: UInt32(kVK_ANSI_5), carbonModifiers: UInt32(cmdKey | optionKey))
 
+    @Test func theCaptureKeysAreRegisteredWithTheStoredCombosAndRouted() throws {
+        var bindings = HotKeyBindings.defaults
+        bindings.captureArea = Self.cmdOpt5
+        settings.hotKeyBindings = bindings
+        var phase: RecordingPhase?
+        var presses: [String] = []
+        hotKeys.installCaptureKeys(
+            phase: { phase },
+            onCaptureArea: { presses.append("area") },
+            onStopRecording: { presses.append("stop") },
+            onCaptureFullscreen: { presses.append("fullscreen") }
+        )
+        #expect(center.combos[.captureArea] == Self.cmdOpt5)
+        #expect(center.combos[.captureFullscreen] == .defaultFullscreen)
+        let area = try #require(center.handlers[.captureArea])
+        area()
+        phase = .recording(.interact)
+        area()
+        phase = .setup(.pointer)
+        area()
+        let fullscreen = try #require(center.handlers[.captureFullscreen])
+        fullscreen()
+        #expect(presses == ["area", "stop", "fullscreen"])
+    }
+
     @Test func aCaptureComboIsReplacedLiveThenSavedAndAnnounced() {
-        var changes: [(SnappyHotKey, HotKeyCombo)] = []
-        hotKeys.onChange.append { changes.append(($0, $1)) }
+        var labels = 0
+        hotKeys.observeLabels { labels += 1 }
         #expect(hotKeys.set(.captureArea, to: Self.cmdOpt5) == nil)
         #expect(center.replaced.map(\.0) == [.captureArea])
         #expect(settings.captureHotKey == Self.cmdOpt5)
         #expect(SettingsStore(defaults: defaults).captureHotKey == Self.cmdOpt5, "persisted")
-        #expect(changes.map(\.0) == [.captureArea])
-        #expect(changes.map(\.1) == [Self.cmdOpt5])
+        #expect(labels == 1)
+        #expect(hotKeys.label(for: .captureArea) == "⌥⌘5")
         #expect(center.probed.isEmpty, "a lifetime hot key is rebound, not probed")
     }
 
     @Test func aComboTheSystemRefusesKeepsTheOldOne() {
         center.taken = [Self.cmdOpt5.key]
         var changes = 0
-        hotKeys.onChange.append { _, _ in changes += 1 }
+        hotKeys.observeLabels { changes += 1 }
         #expect(hotKeys.set(.captureFullscreen, to: Self.cmdOpt5) == .unavailable(Self.cmdOpt5))
         #expect(settings.fullscreenHotKey == .defaultFullscreen)
         #expect(changes == 0)
@@ -94,7 +138,7 @@ struct GlobalHotKeysTests {
 
     @Test func theSameComboAgainIsNotSavedOrAnnounced() {
         var changes = 0
-        hotKeys.onChange.append { _, _ in changes += 1 }
+        hotKeys.observeLabels { changes += 1 }
         #expect(hotKeys.set(.captureArea, to: .defaultCapture) == nil)
         #expect(changes == 0)
         #expect(settings.hotKeyBindings == .defaults)
@@ -107,7 +151,7 @@ struct GlobalHotKeysTests {
         center.unbound = [.captureArea]
         center.taken = [HotKeyCombo.defaultCapture.key]
         var statusChanges = 0
-        hotKeys.onStatusChange.append { statusChanges += 1 }
+        hotKeys.observeLabels { statusChanges += 1 }
         #expect(!hotKeys.isLive(.captureArea))
         #expect(hotKeys.isLive(.captureFullscreen))
         #expect(hotKeys.set(.captureArea, to: .defaultCapture) == .unavailable(.defaultCapture), "still taken")
@@ -117,6 +161,14 @@ struct GlobalHotKeysTests {
         #expect(hotKeys.isLive(.captureArea))
         #expect(statusChanges == 1)
         #expect(settings.hotKeyBindings == .defaults)
+    }
+
+    @Test func aLabelIsTheComboWhileItIsLiveElseNil() {
+        #expect(hotKeys.label(for: .captureArea) == "⇧⌘4")
+        center.unbound = [.captureArea]
+        #expect(hotKeys.label(for: .captureArea) == nil)
+        #expect(hotKeys.label(for: .drawMode) == "⌃⌥D", "outside a session: the next session's")
+        #expect(GlobalHotKeys(settings: settings, center: nil).label(for: .captureArea) == "⇧⌘4", "no center")
     }
 
     @Test func aSessionHotKeyOutsideASessionReadsAsLive() {
@@ -130,21 +182,18 @@ struct GlobalHotKeysTests {
     @Test func retryingTellsTheFields() {
         center.unbound = [.captureFullscreen]
         var statusChanges = 0
-        hotKeys.onStatusChange.append { statusChanges += 1 }
+        hotKeys.observeLabels { statusChanges += 1 }
         hotKeys.retryUnbound()
         #expect(center.retries == 1)
         #expect(statusChanges == 1)
         #expect(hotKeys.isLive(.captureFullscreen))
     }
 
-    @Test func aLayoutChangeReannouncesEveryCombo() {
-        var changes: [SnappyHotKey] = []
-        hotKeys.onChange.append { hotKey, combo in
-            changes.append(hotKey)
-            #expect(combo == HotKeyBindings.defaults[hotKey])
-        }
+    @Test func aLayoutChangeTellsTheObserversToReReadTheLabels() {
+        var changes = 0
+        hotKeys.observeLabels { changes += 1 }
         hotKeys.keyboardLayoutDidChange()
-        #expect(changes == SnappyHotKey.allCases)
+        #expect(changes == 1)
         #expect(settings.hotKeyBindings == .defaults)
     }
 
@@ -160,26 +209,61 @@ struct GlobalHotKeysTests {
         #expect(settings.recordingMagicPenHotKey == .defaultMagicPen)
     }
 
-    @Test func duringASessionTheCoordinatorRebindsASessionHotKey() {
-        /// The coordinator's answer, and what it was asked.
-        final class Session {
-            var accepts = true
-            var asked: [HotKeyCombo] = []
-        }
-        let session = Session()
-        hotKeys.rebindSession = { hotKey, combo in
-            #expect(hotKey == .magicPen)
-            session.asked.append(combo)
-            return session.accepts
-        }
+    @Test func duringASessionASessionHotKeyIsReboundLive() {
+        hotKeys.beginSession(onDrawMode: {}, onMagicPen: {})
+        var labels = 0
+        hotKeys.observeLabels { labels += 1 }
         #expect(hotKeys.set(.magicPen, to: Self.ctrlOptX) == nil)
         #expect(settings.recordingMagicPenHotKey == Self.ctrlOptX)
-        session.accepts = false
+        #expect(hotKeys.label(for: .magicPen) == "⌃⌥X")
+        #expect(labels == 1, "the toolbar re-reads its labels")
         let y = HotKeyCombo(keyCode: UInt32(kVK_ANSI_Y), carbonModifiers: UInt32(controlKey))
+        center.taken = [y.key]
         #expect(hotKeys.set(.magicPen, to: y) == .unavailable(y))
         #expect(settings.recordingMagicPenHotKey == Self.ctrlOptX, "the old one stays")
-        #expect(session.asked == [Self.ctrlOptX, y])
+        #expect(center.combos[.toggleMagicPen] == Self.ctrlOptX)
+        #expect(center.replaced.map(\.1) == [Self.ctrlOptX])
         #expect(center.probed.isEmpty, "the live rebind is the check")
+        #expect(labels == 1)
+    }
+
+    @Test func aSessionRegistersBothSessionKeysAndReportsTheRefusedOnes() throws {
+        var presses: [String] = []
+        center.taken = [HotKeyCombo.defaultMagicPen.key]
+        let refused = hotKeys.beginSession(onDrawMode: { presses.append("draw") }, onMagicPen: { presses.append("magic") })
+        #expect(refused == [.magicPen])
+        #expect(center.combos[.toggleDrawMode] == .defaultDrawMode)
+        #expect(hotKeys.label(for: .drawMode) == "⌃⌥D")
+        #expect(hotKeys.label(for: .magicPen) == nil, "refused: not advertised")
+        #expect(!hotKeys.isLive(.magicPen))
+        let draw = try #require(center.handlers[.toggleDrawMode])
+        draw()
+        #expect(presses == ["draw"])
+
+        hotKeys.endSession()
+        #expect(center.unregistered == [.toggleDrawMode, .toggleMagicPen])
+        #expect(center.combos[.toggleDrawMode] == nil)
+        #expect(hotKeys.isLive(.magicPen), "outside a session a session key reads as live")
+    }
+
+    @Test func aMagicPenComboEqualToTheDrawModeOneIsNotRegisteredTwice() {
+        settings.recordingDrawModeHotKey = .defaultMagicPen
+        #expect(hotKeys.beginSession(onDrawMode: {}, onMagicPen: {}) == [.magicPen])
+        #expect(center.combos[.toggleMagicPen] == nil)
+        #expect(hotKeys.label(for: .magicPen) == nil)
+        #expect(hotKeys.label(for: .drawMode) == "⌃⌥P")
+    }
+
+    @Test func aSessionKeyNotRegisteredAtSessionStartIsRegisteredByARebind() throws {
+        settings.recordingDrawModeHotKey = .defaultMagicPen
+        var presses = 0
+        hotKeys.beginSession(onDrawMode: {}, onMagicPen: { presses += 1 })
+        #expect(hotKeys.set(.magicPen, to: Self.ctrlOptX) == nil)
+        #expect(center.combos[.toggleMagicPen] == Self.ctrlOptX)
+        #expect(hotKeys.label(for: .magicPen) == "⌃⌥X")
+        let magic = try #require(center.handlers[.toggleMagicPen])
+        magic()
+        #expect(presses == 1, "the session's handler")
     }
 
     @Test func resetRestoresTheDefaultUnlessAnotherHotKeyHoldsIt() {
@@ -195,7 +279,7 @@ struct GlobalHotKeysTests {
 
     @Test func aRecorderSuspendsTheCenterWhileItWaits() {
         var statusChanges = 0
-        hotKeys.onStatusChange.append { statusChanges += 1 }
+        hotKeys.observeLabels { statusChanges += 1 }
         hotKeys.setRecorderActive(true)
         #expect(statusChanges == 0)
         hotKeys.setRecorderActive(false)

@@ -249,11 +249,7 @@ final class StatusItemController: NSObject, NSMenuItemValidation {
         // A Capture Area remap (or a layout switch) mid-recording, or the
         // combo going live / being lost (a resume, a retry): the red ● must
         // not advertise a dead stop shortcut.
-        globalHotKeys.onChange.append { [weak self] hotKey, _ in
-            guard hotKey == .captureArea else { return }
-            self?.refreshStopToolTip()
-        }
-        globalHotKeys.onStatusChange.append { [weak self] in self?.refreshStopToolTip() }
+        globalHotKeys.observeLabels { [weak self] in self?.refreshStopToolTip() }
     }
 
     private func refreshStopToolTip() {
