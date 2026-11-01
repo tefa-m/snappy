@@ -89,3 +89,17 @@ Tests use **Swift Testing**, not XCTest. Keep the build at 0 warnings and the su
 ## Private notes
 
 Machine- and person-specific context (employer constraints, decision log, agent workflow, pending checklists) lives in `CLAUDE.local.md`, which is git-ignored. If it exists, read it too.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (`tefa-m/snappy`, via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
